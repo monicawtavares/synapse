@@ -2,7 +2,7 @@
 	"name": "SQL script 1",
 	"properties": {
 		"content": {
-			"query": "-- This is auto-generated code\nSELECT\n    TOP 100 \n    country_code,\n    count(case when lower(sig_class) = 'low' then 1 end) AS low_count,\n    count(case when lower(sig_class) = 'moderate' then 1 end) AS moderate_count,\n    count(case when lower(sig_class) = 'high' then 1 end) AS high_count\nFROM\n    OPENROWSET(\n        BULK 'https://datalukeproj.dfs.core.windows.net/gold/earthquake_events_gold/**',\n        FORMAT = 'PARQUET'\n    ) AS [result]\nGROUP BY country_code;",
+			"query": "-- This is auto-generated code\nSELECT\n    TOP 100 \n    country_code,\n    count(case when lower(sig_class) = 'low' then 1 end) AS low_count,\n    count(case when lower(sig_class) = 'moderate' then 1 end) AS moderate_count,\n    count(case when lower(sig_class) = 'high' then 1 end) AS high_count\nFROM\n    OPENROWSET(\n        BULK 'https://datalukeproj.dfs.core.windows.net/gold/earthquake_events_gold/**',\n        FORMAT = 'PARQUET'\n    ) AS [result]\nGROUP BY country_code;\n\n--test commento for github commit",
 			"metadata": {
 				"language": "sql"
 			},
