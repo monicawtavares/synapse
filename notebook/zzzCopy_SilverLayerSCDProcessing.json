@@ -1,0 +1,685 @@
+{
+	"name": "zzzCopy_SilverLayerSCDProcessing",
+	"properties": {
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"bigDataPool": {
+			"referenceName": "ChemonicsSpkPl",
+			"type": "BigDataPoolReference"
+		},
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "fe02f62b-2ef0-4759-a7ff-4a89b7160e51"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"a365ComputeOptions": {
+				"id": "/subscriptions/cac456ac-e3db-41a1-8f9c-a6dc9fe183f8/resourceGroups/data-platform-rg/providers/Microsoft.Synapse/workspaces/chempdpsynapse01/bigDataPools/ChemonicsSpkPl",
+				"name": "ChemonicsSpkPl",
+				"auth": {
+					"type": "AAD",
+					"authResource": "https://dev.azuresynapse.net"
+				}
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Persistence Zone Processing  \r\n",
+					"\r\n",
+					"#### Author: Sushanth Manne \r\n",
+					"#### Created Date: 2021-04-13\r\n",
+					"#### Description: Performs SCD type 2 logic and moves data from Bronze to Silver layer\r\n",
+					"\r\n",
+					"Prerequisites:  \r\n",
+					"\r\n",
+					"Input Variables:  \r\n",
+					"- primaryKeyColumns\r\n",
+					"- bronzeDataPath\r\n",
+					"- silverDataPath\r\n",
+					"- tableName\r\n",
+					"- fileName"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"import re\r\n",
+					"import datetime\r\n",
+					"from notebookutils import mssparkutils\r\n",
+					"\r\n",
+					"from pyspark.sql import functions as F, Window\r\n",
+					"from pyspark.sql.types import *\r\n",
+					"\r\n",
+					"from delta.tables import DeltaTable"
+				],
+				"execution_count": 31
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true,
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"Params = \"\"\r\n",
+					"RunDate = '2021-03-03T14:29:23.2146092Z'\r\n",
+					"accountName = 'chempdpadls02'"
+				],
+				"execution_count": 32
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"def table_exists(tbl):\r\n",
+					"    tbl_split = tbl.split('.')\r\n",
+					"    if len(tbl_split) == 2:\r\n",
+					"        db = tbl_split[0]\r\n",
+					"        tableName = tbl_split[1]\r\n",
+					"    elif len(tbl_split) == 1:\r\n",
+					"        db = 'default'\r\n",
+					"        tableName = tbl\r\n",
+					"    else:\r\n",
+					"        return False\r\n",
+					"    dbList = [i.name for i in spark.catalog.listDatabases()]\r\n",
+					"    if db in dbList:\r\n",
+					"        tableList = [i.name for i in spark.catalog.listTables(db)]\r\n",
+					"        if tableName in tableList:\r\n",
+					"            return True\r\n",
+					"        else:\r\n",
+					"            return False\r\n",
+					"    else:\r\n",
+					"        return False"
+				],
+				"execution_count": 33
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"db = 'default'"
+				],
+				"execution_count": 34
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"def column_naming_convention(df):\r\n",
+					"    import re\r\n",
+					"    oldCols = df.columns\r\n",
+					"    newCols = []\r\n",
+					"    for col in oldCols:\r\n",
+					"        newCol = re.sub('[^\\w]', '', col)\r\n",
+					"        newCols.append(newCol)\r\n",
+					"    raw_df_columns_cleansed = df.toDF(*newCols)\r\n",
+					"    return raw_df_columns_cleansed"
+				],
+				"execution_count": 35
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"def path_exists(path):\r\n",
+					"    try:\r\n",
+					"        mssparkutils.fs.ls(path)\r\n",
+					"        return True\r\n",
+					"    except:\r\n",
+					"        return False"
+				],
+				"execution_count": 36
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"mssparkutils.fs.ls"
+				],
+				"execution_count": 37
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"ParamsDict = eval(Params)\r\n",
+					"file_exists = True\r\n",
+					"\r\n",
+					"primaryKeyColumns = ParamsDict.get('primaryKeyColumns', '').split(',')\r\n",
+					"bronzeDataPath = ParamsDict.get('bronzeDataPath', '')\r\n",
+					"datePath = ParamsDict.get('datePath', '')\r\n",
+					"silverDataPath = ParamsDict.get('silverDataPath', '')\r\n",
+					"tableName = ParamsDict.get('tableName', '')\r\n",
+					"fileExtension = ParamsDict.get('fileExtension', 'parquet')\r\n",
+					"fileName = ParamsDict.get('tableName', tableName)\r\n",
+					"\r\n",
+					"bronzeDataPath = \"abfss://bronze@\"+accountName+\".dfs.core.windows.net/\"+bronzeDataPath+datePath+\"/\"+fileName+\"/\"\r\n",
+					"silverDataPath = \"abfss://silver@\"+accountName+\".dfs.core.windows.net/\"+silverDataPath+tableName\r\n",
+					"\r\n",
+					"bronzeBadRecordsPath = \"abfss://bronze@\"+accountName+\".dfs.core.windows.net/\"+\"/\"+tableName+\"/Bad_Records\"\r\n",
+					"silverBadRecordsPath = \"abfss://silver@\"+accountName+\".dfs.core.windows.net/\"+\"/\"+tableName+\"/Bad_Records\""
+				],
+				"execution_count": 38
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"mssparkutils.fs.ls(bronzeDataPath)"
+				],
+				"execution_count": 39
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"# Parse timestamp for date directory\r\n",
+					"# Not used for SCD data\r\n",
+					"dt_match = re.match(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}', RunDate)\r\n",
+					"str_match = re.match(r'^[0-9]{4}/[0-9]{2}/[0-9]{2}', RunDate)\r\n",
+					"if dt_match:\r\n",
+					"    RunDate = dt_match.group().replace('-', '/')\r\n",
+					"elif str_match:\r\n",
+					"    RunDate = str_match.group()\r\n",
+					"else:\r\n",
+					"    RunDate = (datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(hours=5)).strftime('%Y/%m/%d')\r\n",
+					"print(RunDate)"
+				],
+				"execution_count": 40
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"curr_df = (\r\n",
+					"    spark.read\r\n",
+					"    .format('delta')\r\n",
+					"    .option('badRecordsPath', silverBadRecordsPath)\r\n",
+					"    .option('path', silverDataPath)\r\n",
+					"    .load()\r\n",
+					"    .where(F.col('CURRENT_IND') == 'A').cache()\r\n",
+					")"
+				],
+				"execution_count": 41
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"new_df = (\r\n",
+					"    spark.read\r\n",
+					"    .format('parquet')\r\n",
+					"    .option('inferSchema', 'true')\r\n",
+					"    .option('badRecordsPath', bronzeBadRecordsPath)\r\n",
+					"    .option('path', bronzeDataPath)\r\n",
+					"    .load().cache()\r\n",
+					")\r\n",
+					"new_df = column_naming_convention(new_df)\r\n",
+					"display(new_df)"
+				],
+				"execution_count": 42
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"if path_exists(silverDataPath):\r\n",
+					"    curr_df = (\r\n",
+					"        spark.read\r\n",
+					"        .format('delta')\r\n",
+					"        .option('badRecordsPath', silverBadRecordsPath)\r\n",
+					"        .option('path', silverDataPath)\r\n",
+					"        .load()\r\n",
+					"        .where(F.col('CURRENT_IND') == 'A').cache()\r\n",
+					"    )\r\n",
+					"\r\n",
+					"if path_exists(bronzeDataPath):\r\n",
+					"    new_df = (\r\n",
+					"        spark.read\r\n",
+					"        .format('parquet')\r\n",
+					"        .option('inferSchema', 'true')\r\n",
+					"        .option('badRecordsPath', bronzeBadRecordsPath)\r\n",
+					"        .option('path', bronzeDataPath)\r\n",
+					"        .load().cache()\r\n",
+					"    )\r\n",
+					"    new_df = column_naming_convention(new_df)\r\n",
+					"    \r\n",
+					"# Use all columns as primary key if none exists\r\n",
+					"if primaryKeyColumns == ['']:\r\n",
+					"    if path_exists(silverDataPath) and path_exists(bronzeDataPath):\r\n",
+					"        primaryKeyColumns = list(\r\n",
+					"            set(new_df.drop('CURRENT_IND', 'EFF_START_DATE', 'EFF_END_DATE').columns) \r\n",
+					"            & set(curr_df.drop('CURRENT_IND', 'EFF_START_DATE', 'EFF_END_DATE').columns)\r\n",
+					"        )\r\n",
+					"    elif path_exists(landingDataPath):\r\n",
+					"        primaryKeyColumns = new_df.drop('CURRENT_IND', 'EFF_START_DATE', 'EFF_END_DATE').columns"
+				],
+				"execution_count": 43
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"primaryKeyColumns = [x.strip() for x in primaryKeyColumns]"
+				],
+				"execution_count": 44
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"idCols = primaryKeyColumns\r\n",
+					"equalityClause = ''\r\n",
+					"\r\n",
+					"equalityClause = ' AND '.join(['(sink.'+c+'=updates.mergeKey'+str(i)+')' for i, c in enumerate(primaryKeyColumns)])  \r\n",
+					"InsertMergeKeys = ['NULL as mergeKey' + str(i) for i, c in enumerate(primaryKeyColumns)]\r\n",
+					"UpdateMergeKeys = [c + ' as mergeKey' + str(i) for i, c in enumerate(primaryKeyColumns)]\r\n",
+					"\r\n",
+					"# cols = new_df.columns\r\n",
+					"conditionClause = \"sink.CURRENT_IND = 'A'\"\r\n",
+					"# conditionClause += \" AND (\" + \" OR \".join([\"sink.\"+c+\" <> updates.\"+c for c in cols]) + \")\"\r\n",
+					"\r\n",
+					"SetClause = {c: ''.join(['updates.', c]) for c in new_df.columns + ['CURRENT_IND', 'EFF_START_DATE', 'EFF_END_DATE']}\r\n",
+					"  \r\n",
+					"print('Equality Clause:', equalityClause)"
+				],
+				"execution_count": 45
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"end_date = datetime.datetime(9999,12,31)\r\n",
+					"dedup_window = Window.partitionBy(primaryKeyColumns).orderBy(F.col('EFF_START_DATE').desc())\r\n",
+					"\r\n",
+					"if path_exists(bronzeDataPath) and path_exists(silverDataPath):\r\n",
+					"    print('Path Exists')\r\n",
+					"    insert_df = (\r\n",
+					"        new_df.alias('updates')\r\n",
+					"        .join(curr_df.alias('sink'), primaryKeyColumns)\r\n",
+					"        .where(conditionClause)\r\n",
+					"    )\r\n",
+					"    \r\n",
+					"    update_df = (\r\n",
+					"        new_df.alias('updates')\r\n",
+					"        .join(curr_df.alias('sink'), primaryKeyColumns)\r\n",
+					"        .where(conditionClause)\r\n",
+					"        .selectExpr(*InsertMergeKeys, 'updates.*')\r\n",
+					"        .unionByName(\r\n",
+					"            new_df.selectExpr(*UpdateMergeKeys, '*')\r\n",
+					"        )\r\n",
+					"        .withColumn('EFF_END_DATE', F.lit(end_date))\r\n",
+					"        .withColumn('EFF_START_DATE', F.current_timestamp())\r\n",
+					"        .withColumn('CURRENT_IND', F.lit('A'))\r\n",
+					"    )\r\n",
+					"elif path_exists(bronzeDataPath):\r\n",
+					"    insert_df = (\r\n",
+					"        new_df\r\n",
+					"        .withColumn('CURRENT_IND', F.lit('A'))\r\n",
+					"        .withColumn('EFF_END_DATE', F.lit(end_date))\r\n",
+					"        .withColumn('EFF_START_DATE', F.current_timestamp())\r\n",
+					"        .withColumn('row', F.row_number().over(dedup_window))\r\n",
+					"        .where(F.col('row') == 1).drop('row')\r\n",
+					"    )"
+				],
+				"execution_count": 46
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"display(update_df)"
+				],
+				"execution_count": 47
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"if db is not None:\r\n",
+					"    spark.sql('CREATE DATABASE IF NOT EXISTS '+db)\r\n",
+					"\r\n",
+					"if path_exists(silverDataPath) and idCols[0]!= '':\r\n",
+					"    deltaTable = DeltaTable.forPath(spark, silverDataPath)\r\n",
+					"    (\r\n",
+					"        deltaTable.alias(\"sink\").merge(\r\n",
+					"        update_df.alias(\"updates\"),\r\n",
+					"        equalityClause\r\n",
+					"        )\r\n",
+					"        .whenMatchedUpdate(\r\n",
+					"            condition = conditionClause,\r\n",
+					"            set = {\r\n",
+					"                \"CURRENT_IND\": \"'N'\",\r\n",
+					"                \"EFF_END_DATE\": \"updates.EFF_START_DATE\"\r\n",
+					"            }\r\n",
+					"        )\r\n",
+					"        .whenNotMatchedInsert(values = SetClause)\r\n",
+					"        .execute()\r\n",
+					"    )\r\n",
+					"elif path_exists(bronzeDataPath):\r\n",
+					"    (\r\n",
+					"        insert_df\r\n",
+					"        .write\r\n",
+					"        .format('delta')\r\n",
+					"        .mode(\"APPEND\")\r\n",
+					"        .option('mergeSchema', 'true')\r\n",
+					"        .option(\"path\", silverDataPath)\r\n",
+					"        .saveAsTable(db+'.'+tableName)\r\n",
+					"    )"
+				],
+				"execution_count": 48
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					"tmpdf = spark.read.format('delta').load(silverDataPath)\r\n",
+					"tmpdf.createOrReplaceTempView('tmptable')"
+				],
+				"execution_count": 49
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\r\n",
+					"SELECT EFF_START_DATE, EFF_END_DATE, COUNT(1) FROM tmptable GROUP BY EFF_START_DATE, EFF_END_DATE ORDER BY 1 DESC"
+				],
+				"execution_count": 50
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\r\n",
+					"SELECT * FROM tmptable WHERE DATE(EFF_START_DATE) = '2021-04-01'"
+				],
+				"execution_count": 51
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					""
+				],
+				"execution_count": null
+			}
+		]
+	}
+}

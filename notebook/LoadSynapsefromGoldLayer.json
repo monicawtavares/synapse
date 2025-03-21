@@ -1,0 +1,121 @@
+{
+	"name": "LoadSynapsefromGoldLayer",
+	"properties": {
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"bigDataPool": {
+			"referenceName": "ChemonicsSpkPl",
+			"type": "BigDataPoolReference"
+		},
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "39b69b2c-b158-44aa-bc66-308d6eacbf3f"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_spark",
+				"display_name": "scala"
+			},
+			"language_info": {
+				"name": "scala"
+			},
+			"a365ComputeOptions": {
+				"id": "/subscriptions/cac456ac-e3db-41a1-8f9c-a6dc9fe183f8/resourceGroups/data-platform-rg/providers/Microsoft.Synapse/workspaces/chempdpsynapse01/bigDataPools/ChemonicsSpkPl",
+				"name": "ChemonicsSpkPl",
+				"auth": {
+					"type": "AAD",
+					"authResource": "https://dev.azuresynapse.net"
+				}
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Load Synapse from Gold Layer\r\n",
+					"Author: Sushanth Manne  \r\n",
+					"Created Date: 2021-04-13  \r\n",
+					"Description: Notebook to load tables in Synapse from Gold Layer\r\n",
+					"\r\n",
+					"Prerequisites:  \r\n",
+					"\r\n",
+					"Input Variables:  \r\n",
+					"- filePath\r\n",
+					"- tableName"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true,
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"val filePath  = \"\"\r\n",
+					"val tableName = \"\""
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"collapsed": false,
+					"tags": []
+				},
+				"source": [
+					"val df = spark.read.format(\"delta\").load(filePath)"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": true
+				},
+				"source": [
+					" df.write.synapsesql(tableName, Constants.INTERNAL)"
+				],
+				"execution_count": 3
+			}
+		]
+	}
+}
