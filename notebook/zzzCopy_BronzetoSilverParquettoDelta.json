@@ -1,6 +1,9 @@
 {
 	"name": "zzzCopy_BronzetoSilverParquettoDelta",
 	"properties": {
+		"folder": {
+			"name": "DailyDelta"
+		},
 		"nbformat": 4,
 		"nbformat_minor": 2,
 		"bigDataPool": {
@@ -17,7 +20,7 @@
 				"spark.dynamicAllocation.enabled": "false",
 				"spark.dynamicAllocation.minExecutors": "2",
 				"spark.dynamicAllocation.maxExecutors": "2",
-				"spark.autotune.trackingId": "e36ed8c7-80fc-46cd-a9f4-268ff710a796"
+				"spark.autotune.trackingId": "006fff16-8f01-40bb-bdcb-c82fdbf23677"
 			}
 		},
 		"metadata": {
