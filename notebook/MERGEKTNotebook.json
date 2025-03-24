@@ -1,0 +1,614 @@
+{
+	"name": "MERGEKTNotebook",
+	"properties": {
+		"folder": {
+			"name": "Arhitecture"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "99d58ece-0533-4e35-b366-c61070ed2d31"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Explanation of Merge SCD Type 2 and Usage of `IsDelete` in the Provided Code\n",
+					"\n",
+					"The provided code defines a function `bronze_batch_process` that processes incoming data batches and performs a merge operation using the Slowly Changing Dimension Type 2 (SCD Type 2) methodology. This function is designed to handle data updates and maintain historical records in a Delta Lake table (referred to as the bronze table).\n",
+					"\n",
+					"Below is a detailed explanation of how the SCD Type 2 merge is implemented in the code and how the `IsDelete` flag is used.\n",
+					"\n",
+					"## Table of Contents\n",
+					"\n",
+					"1. [SCD Type 2 Overview](#scd-type-2-overview)\n",
+					"2. [Implementation in the Code](#implementation-in-the-code)\n",
+					"   - [Primary Key and Merge Condition](#primary-key-and-merge-condition)\n",
+					"   - [Adding System Columns](#adding-system-columns)\n",
+					"   - [Window Functions and Latest Records](#window-functions-and-latest-records)\n",
+					"   - [Merge Operation](#merge-operation)\n",
+					"3. [Usage of `IsDelete`](#usage-of-isdelete)\n",
+					"4. [Summary](#summary)\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## SCD Type 2 Overview\n",
+					"\n",
+					"Slowly Changing Dimension Type 2 is a data warehousing technique used to track historical changes in dimension data. It involves:\n",
+					"\n",
+					"- **Maintaining Historical Records**: Keeping previous versions of records when data changes occur.\n",
+					"- **Using Metadata Columns**: Adding columns such as `IsActive`, `EffectiveFrom`, and `EffectiveTo` to indicate the active record and its validity period.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Implementation in the Code\n",
+					"\n",
+					"### Primary Key and Merge Condition\n",
+					"\n",
+					"The code first checks if an overwrite operation is not requested and if primary keys are provided. It constructs the merge condition based on the primary keys:\n",
+					"\n",
+					"```python\n",
+					"if overwrite != \"yes\" and primary_key is not None:\n",
+					"    pk_list = [pk.strip() for pk in primary_key.split(',')]\n",
+					"    on_condition = ' AND '.join([f\"existing.{pk} = incoming.{pk}\" for pk in pk_list])\n",
+					"    on_condition += \" AND existing.IsActive = '1'\"\n",
+					"```\n",
+					"\n",
+					"- **Primary Keys (`pk_list`)**: A list of primary key columns used to uniquely identify records.\n",
+					"- **Merge Condition (`on_condition`)**: Matches records in the existing table (`existing`) and incoming batch (`incoming`) where primary keys match and the existing record is active (`IsActive = '1'`).\n",
+					"\n",
+					"### Adding System Columns\n",
+					"\n",
+					"Depending on whether Change Data Feed (CDF) is enabled (`cdf == \"yes\"`) and the target table category, the code adds system columns to the incoming data to facilitate SCD Type 2 tracking.\n",
+					"\n",
+					"#### For CDF Enabled Scenarios\n",
+					"\n",
+					"```python\n",
+					"new_df1 = batch_df.withColumn('IsActive', lit('1')) \\\n",
+					"    .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"    .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS')) \\\n",
+					"    .filter(\"`_change_type`=='update_postimage' or `_change_type`=='insert'\")\n",
+					"```\n",
+					"\n",
+					"- **`IsActive`**: Indicates if the record is the current active version (`1` for active).\n",
+					"- **`EffectiveFrom`**: Timestamp when the record became active.\n",
+					"- **`EffectiveTo`**: Future timestamp indicating the record is currently active.\n",
+					"- **Filtering**: Only includes records that are inserts or updates.\n",
+					"\n",
+					"#### For Non-CDF Scenarios\n",
+					"\n",
+					"```python\n",
+					"new_df1 = batch_df.withColumn('IsActive', lit('1')) \\\n",
+					"    .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"    .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS')) \\\n",
+					"    .withColumn(\"input_file_name\", F.regexp_extract(F.input_file_name(), r'(\\d{4}-\\d{2}-\\d{2}/\\d{2}/\\d{2})', 1)) \\\n",
+					"    .withColumn(\"input_file_timestamp\", F.to_timestamp(F.regexp_replace(\"input_file_name\", '/', ' '), \"yyyy-MM-dd HH mm\")) \\\n",
+					"    .drop(\"input_file_name\")\n",
+					"```\n",
+					"\n",
+					"- **`input_file_timestamp`**: Extracts timestamp from the input file name for ordering records.\n",
+					"\n",
+					"### Window Functions and Latest Records\n",
+					"\n",
+					"To handle multiple versions of the same record, the code uses window functions to keep only the latest version based on a timestamp.\n",
+					"\n",
+					"```python\n",
+					"primary_key_list = [x.strip() for x in primary_key.split(',')]\n",
+					"if cdf == \"yes\":\n",
+					"    w = Window().partitionBy(primary_key_list).orderBy(F.col(\"`_commit_timestamp`\").desc())\n",
+					"else:\n",
+					"    w = Window().partitionBy(primary_key_list).orderBy(F.col(\"input_file_timestamp\").desc())\n",
+					"\n",
+					"new_df2 = new_df1.withColumn('row_num', row_number().over(w)) \\\n",
+					"    .filter(\"row_num == 1\") \\\n",
+					"    .drop('row_num', '_change_type', '_commit_version', '_commit_timestamp')\n",
+					"```\n",
+					"\n",
+					"- **Window Partitioning**: Groups records by primary key.\n",
+					"- **Ordering**: Orders records within each group by the commit timestamp or input file timestamp in descending order.\n",
+					"- **Row Number**: Assigns a row number to each record; only the latest (`row_num == 1`) is kept.\n",
+					"\n",
+					"### Merge Operation\n",
+					"\n",
+					"The code performs the merge operation using Delta Lake's `merge` function:\n",
+					"\n",
+					"```python\n",
+					"existing_table.alias(\"existing\") \\\n",
+					"    .merge(\n",
+					"        new_df2.alias(\"incoming\"),\n",
+					"        on_condition\n",
+					"    ).whenMatchedUpdate(\n",
+					"        set={\n",
+					"            \"EffectiveTo\": \"current_timestamp()\",\n",
+					"            \"IsActive\": \"0\"\n",
+					"        }\n",
+					"    ).execute()\n",
+					"```\n",
+					"\n",
+					"- **Merge Condition**: Uses the `on_condition` based on primary keys and active status.\n",
+					"- **When Matched (Update)**: Updates the existing active records to set `IsActive` to `0` and `EffectiveTo` to the current timestamp.\n",
+					"- **Execution**: Applies the update to existing records in the bronze table.\n",
+					"\n",
+					"After the merge, the code appends the new records to the bronze table:\n",
+					"\n",
+					"```python\n",
+					"if cdf == \"yes\":\n",
+					"    new_df2.filter(\"IsDelete is null\").write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"else:\n",
+					"    new_df2.write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"```\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Usage of `IsDelete`\n",
+					"\n",
+					"The `IsDelete` flag is used to handle delete operations, especially when using Change Data Feed (CDF). Records marked for deletion should not be re-inserted into the bronze table.\n",
+					"\n",
+					"### Filtering Deleted Records\n",
+					"\n",
+					"Before writing the new records to the bronze table, the code filters out records where `IsDelete` is not null:\n",
+					"\n",
+					"```python\n",
+					"if cdf == \"yes\":\n",
+					"    new_df2.filter(\"IsDelete is null\").write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"```\n",
+					"\n",
+					"- **`IsDelete is null`**: Ensures only records that are not marked for deletion are written to the bronze table.\n",
+					"- **Purpose**: Prevents deleted records from being re-inserted, maintaining data integrity.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Summary\n",
+					"\n",
+					"- **SCD Type 2 Implementation**: The code updates existing records to inactive and adds new records as active, preserving historical data.\n",
+					"- **Merge Condition**: Based on primary keys and active status to accurately identify records to update.\n",
+					"- **Use of Window Functions**: Retrieves the latest version of each record based on timestamps.\n",
+					"- **Handling Deletes with `IsDelete`**: Filters out deleted records to prevent re-insertion into the bronze table.\n",
+					"- **CDF Support**: Adjusts processing logic when Change Data Feed is enabled.\n",
+					"\n",
+					"By following the SCD Type 2 methodology, the code effectively tracks changes over time, ensuring that historical data is preserved and that the current state is accurately reflected in the bronze table.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"**Note**: The code includes additional logic for handling specific categories like `fo` (Finance Operations) and `crm` (Customer Relationship Management), as well as mapping option sets. However, the core SCD Type 2 and `IsDelete` handling is as described above."
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### For overwrites :\n",
+					"- there will always be some null rows with IsDelete=True on the **source** side"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"desc table extended dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select * from dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry where IsDelete=TRUE"
+				],
+				"execution_count": 17
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select count(*) from fo_query.generaljournalaccountentry where IsActive=0 and IsDelete=True and recid is not null"
+				],
+				"execution_count": 11
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Active Data as IsActive=1\n",
+					"- primary key will never be null, nor will rows be null - these rows are not deleted, but expired(old updates)\n",
+					"- recid is only null for IsDelete=True records ingested at overwrite"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT EffectiveFrom, EffectiveTo, COUNT(*) AS RecordCount\n",
+					"FROM fo_query.generaljournalaccountentry\n",
+					"WHERE IsActive = 1 AND recid IS NOT NULL\n",
+					"GROUP BY EffectiveFrom, EffectiveTo ORDER BY EffectiveTo ASC;\n",
+					"\n",
+					""
+				],
+				"execution_count": 5
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Historical Data as IsActive=0 \n",
+					"- primary key will never be null, nor will rows be null - these are rows are not deleted, but expired(old updates)\n",
+					"- primary will only be null for isDelete=True rows ingested at overwrite"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT EffectiveFrom, EffectiveTo, COUNT(*) AS RecordCount\n",
+					"FROM fo_query.generaljournalaccountentry\n",
+					"WHERE IsActive = 0 AND recid IS NOT NULL\n",
+					"GROUP BY EffectiveFrom, EffectiveTo ORDER BY EffectiveTo ASC;\n",
+					"\n",
+					""
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Check operationmetrics in desc history of source table to compare with above"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"desc history dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry"
+				],
+				"execution_count": 7
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Query change data feed for each synapse link source table based on version/timestamp"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT * FROM FRAMEWORKDB.errorlogging WHERE TABLE_NAME='new_projectsubcontractors_partitioned'"
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select * from table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry',1180,1207)"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Records Ingested at overwrite will stay as IsActive=0 and recid. \n",
+					"- cannot source history for these rows\n",
+					"- can possibly delete them before overwrite if need be\n",
+					"- Extended incremental rows over 2 weeks will accumulate lot of scd type 2 history. Current overwrite schedule is at 3 days"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select * from fo_query.generaljournalaccountentry where IsActive=0 and recid is null "
+				],
+				"execution_count": 8
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"desc history cdf_logs.fo_query_generaljournalaccountentry_cdc"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"SELECT COUNT(*) \n",
+					"FROM cdf_logs.fo_query_generaljournalaccountentry_cdc VERSION AS OF 2\n",
+					""
+				],
+				"execution_count": 8
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"desc table extended cdf_logs.fo_query_generaljournalaccountentry_cdc"
+				],
+				"execution_count": 11
+			}
+		]
+	}
+}

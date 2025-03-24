@@ -1,6 +1,9 @@
 {
 	"name": "LoadBronzeLayer - Copy",
 	"properties": {
+		"folder": {
+			"name": "DailyDelta"
+		},
 		"nbformat": 4,
 		"nbformat_minor": 2,
 		"bigDataPool": {

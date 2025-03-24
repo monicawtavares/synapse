@@ -1,6 +1,9 @@
 {
 	"name": "neuacc-odp-architecture-medallion",
 	"properties": {
+		"folder": {
+			"name": "Arhitecture"
+		},
 		"nbformat": 4,
 		"nbformat_minor": 2,
 		"sessionProperties": {
@@ -13,7 +16,7 @@
 				"spark.dynamicAllocation.enabled": "false",
 				"spark.dynamicAllocation.minExecutors": "2",
 				"spark.dynamicAllocation.maxExecutors": "2",
-				"spark.autotune.trackingId": "b6ad1054-5229-4177-b7c7-9d50506d5d9e"
+				"spark.autotune.trackingId": "9c0a8a39-0cd9-463a-bd31-e280173c5205"
 			}
 		},
 		"metadata": {

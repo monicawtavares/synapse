@@ -1,0 +1,670 @@
+{
+	"name": "Historical Merge KT",
+	"properties": {
+		"folder": {
+			"name": "Arhitecture"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "4e20e5aa-9c5b-40c9-b781-2940629f6d41"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Historical Merge Logic for SCD Type 2 Changes\n",
+					"\n",
+					"This documentation outlines the technical approach for maintaining SCD (Slowly Changing Dimensions) Type 2 history using a combination of Synapse link tables and historical merge operations. By design, this solution ensures that **historical records are preserved** and that the **query layer** always reflects both current and past states of the data.\n",
+					"\n",
+					"## Overview\n",
+					"\n",
+					"The solution involves two modes of operation for processing data:\n",
+					"\n",
+					"1. **Overwrite Mode:**  \n",
+					"   In this mode, all current records from the Synapse link table are reloaded into the query layer, and subsequently, a historical merge operation is performed. This approach ensures that any existing historical data—captured in a separate schema—is merged back into the query layer, thereby preserving full change history.\n",
+					"\n",
+					"2. **Incremental Mode:**  \n",
+					"   In incremental mode, new changes are captured as incremental feed records from the change data feed (CDF) logs. These incremental updates are processed without reloading the entire dataset, and the solution continues to maintain full SCD Type 2 history within the query layer.\n",
+					"\n",
+					"By adopting these two modes, the system can recover gracefully from failure scenarios and ensure that the historical audit trail of changes is always complete.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Components\n",
+					"\n",
+					"### Source: Synapse Link Table\n",
+					"\n",
+					"- **Location:** Source container in synapse for example dataverse_chemonicscrm_chemonics \n",
+					"- **Purpose:** Holds the latest snapshot of the data.\n",
+					"- **Access Pattern:**  \n",
+					"  - **Overwrite Mode:** Use `.read()` to extract all current records.  \n",
+					"  - **Incremental Mode:** Not directly used; updates are captured through CDF logs.\n",
+					"\n",
+					"### CDF Logs Schema (e.g., `cdf_logs`)\n",
+					"\n",
+					"- **Location:** A dedicated schema for change data feed logs.\n",
+					"- **Purpose:** Persists historical changes over time.  \n",
+					"- **Data Retention:** Configurable (currently 90 days).  \n",
+					"- **Access Pattern:**\n",
+					"  - **Overwrite Mode Step 2:** Perform historical merge by reading entire historical log set to re-establish full SCD Type 2 history.\n",
+					"  - **Incremental Mode:** Consume incremental changes via `.readStream()` to capture only new updates since last run.\n",
+					"\n",
+					"### Query Layer\n",
+					"\n",
+					"- **Location:** Target location for analysis and consumption.\n",
+					"- **Purpose:** Serves as a historical store that maintains both current and historical records using SCD Type 2 patterns.\n",
+					"- **Schema Characteristics:**\n",
+					"  - **Metadata Columns:**  \n",
+					"    - `IsActive`: Indicates if the record is currently active (`1`) or has been superseded (`0`).  \n",
+					"    - `EffectiveFrom`: The start date/time when the record became active.  \n",
+					"    - `EffectiveTo`: The end date/time when the record ceased to be active.\n",
+					"  - **Record Counts:**  \n",
+					"    - The query layer will always have **more rows** than the source table due to the presence of inactive (historical) records.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Detailed Flow\n",
+					"\n",
+					"### Overwrite Mode\n",
+					"\n",
+					"1. **Full Load from Synapse Link Table:**\n",
+					"   - Use `.read()` to retrieve the full dataset from the source Synapse link table.\n",
+					"   - Load all current (active) records into the query layer, setting `IsActive = 1`, `EffectiveFrom` to the current load time, and `EffectiveTo` as a placeholder for future closure.\n",
+					"\n",
+					"2. **Historical Merge:**\n",
+					"   - Read historical changes from the `cdf_logs` schema.\n",
+					"   - Perform a merge operation against the query layer to reintroduce past states of the data.\n",
+					"   - Post-merge, the query layer contains both current and historical records. Current records remain `IsActive = 1`, while older versions are `IsActive = 0` with appropriate `EffectiveFrom` and `EffectiveTo` timestamps.\n",
+					"\n",
+					"**Result:**  \n",
+					"The query layer is fully refreshed and complete with historical data, ensuring no loss of previous states even after a full overwrite.\n",
+					"\n",
+					"### Incremental Mode\n",
+					"\n",
+					"1. **Incremental Updates from CDF Logs:**\n",
+					"   - Use `.readStream()` against the CDF in `cdf_logs` schema to process only the records that have changed since the last run.\n",
+					"   - The retention window (currently 90 days) ensures that incremental feeds are available for a sufficient duration.\n",
+					"   \n",
+					"2. **Maintaining SCD Type 2 History:**\n",
+					"   - As incremental changes stream in, update the query layer:\n",
+					"     - Close out previously active records by setting `IsActive = 0` and `EffectiveTo` to the time of change.\n",
+					"     - Insert new active versions of the records with updated values and `IsActive = 1`.\n",
+					"   \n",
+					"**Result:**  \n",
+					"The query layer continuously evolves to reflect the latest changes while preserving a complete historical record of all previous states.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Failure and Recovery\n",
+					"\n",
+					"- If a pipeline failure occurs during an incremental run, the solution can fallback to the **Overwrite Mode**.  \n",
+					"- Running overwrite at any time ensures that historical data is not lost. The subsequent historical merge step will restore full history to the query layer.\n",
+					"- Once restored, subsequent runs can continue incrementally again.\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### How is history maintained?"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Technical Documentation: Historical Upsert (SCD Type 2) with Spark & Delta Lake\n",
+					"\n",
+					"This documentation provides an overview of how to implement a historical upsert using Spark and Delta Lake to maintain Slowly Changing Dimensions (SCD) Type 2. It outlines the logic behind setting `IsActive`, `EffectiveFrom`, and `EffectiveTo` fields, as well as performing merge operations to preserve a full history of records.\n",
+					"\n",
+					"## Overview\n",
+					"\n",
+					"The process uses a two-step approach to manage historical records:\n",
+					"\n",
+					"1. **Preparation of Incremental Records (new_df1 and new_df2)**:  \n",
+					"   Extracts changed records from the batch or streaming feed and adds SCD Type 2 columns (`IsActive`, `EffectiveFrom`, `EffectiveTo`).\n",
+					"\n",
+					"2. **Historical Merge into Delta Table**:  \n",
+					"   Uses a Delta Lake `MERGE` operation to update historical records by setting their `IsActive` to `0` when they are superseded by a newer record, and inserts new records as active.\n",
+					"\n",
+					"By following this approach, the target table (often called \"bronze\" or \"query layer\") will contain both active and inactive (historical) versions of every record. This provides a complete audit trail for changes over time.\n",
+					"\n",
+					"## Key Concepts\n",
+					"\n",
+					"- **IsActive (INT or STRING)**:  \n",
+					"  - `1`: The record is currently active (latest version).\n",
+					"  - `0`: The record is historical (has been replaced by a newer version).\n",
+					"\n",
+					"- **EffectiveFrom (TIMESTAMP)**:  \n",
+					"  The timestamp from which the record became active.\n",
+					"\n",
+					"- **EffectiveTo (TIMESTAMP)**:  \n",
+					"  The timestamp until which the record was active. By default, future-dated as `9999-12-31 23:59:59.997` to indicate the record is currently active. Once a newer version arrives, this `EffectiveTo` is set to the new record’s `EffectiveFrom`.\n",
+					"\n",
+					"- **Primary Key (PK)**:  \n",
+					"  A set of one or more columns that uniquely identify a record. Used to determine which records represent new versions of existing entities.\n",
+					"\n",
+					"## Detailed Steps\n",
+					"\n",
+					"### 1. Initial Data Preparation (new_df1)\n",
+					"\n",
+					"```python\n",
+					"from pyspark.sql.functions import col, lit, to_timestamp\n",
+					"\n",
+					"# Extract new/changed records from source feed\n",
+					"# Conditions:\n",
+					"# - Only process records that are either post-image of an update or an insert\n",
+					"new_df1 = batch_df1 \\\n",
+					"    .withColumn('IsActive', lit('1')) \\\n",
+					"    .withColumn('EffectiveFrom', col('SinkCreatedOn')) \\\n",
+					"    .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS')) \\\n",
+					"    .filter(\"`_change_type` == 'update_postimage' OR `_change_type` == 'insert'\")\n",
+					"```\n",
+					"\n",
+					"**Key Points:**\n",
+					"\n",
+					"- Sets `IsActive = 1` for all incoming records.\n",
+					"- Initializes `EffectiveFrom` with the record’s creation timestamp (`SinkCreatedOn`).\n",
+					"- Sets `EffectiveTo` to a distant future date, indicating the record is currently active.\n",
+					"- Filters only relevant change types (inserts, update post-images).\n",
+					"\n",
+					"### 2. Determining Active vs. Historical Records (new_df2)\n",
+					"\n",
+					"We use window functions to determine which records remain active and which become historical. This involves ordering records by commit timestamps and deriving `EffectiveTo` from the next record’s `EffectiveFrom`.\n",
+					"\n",
+					"```python\n",
+					"from pyspark.sql.window import Window\n",
+					"from pyspark.sql.functions import row_number, col, when, lead, desc\n",
+					"\n",
+					"primary_key = [x.strip() for x in primary_key.split(',')]\n",
+					"\n",
+					"# Window to find latest record per PK by commit timestamp (descending)\n",
+					"w = Window().partitionBy(primary_key).orderBy(col(\"_commit_timestamp\").desc())\n",
+					"\n",
+					"# Window to adjust EffectiveTo based on next record’s EffectiveFrom\n",
+					"window_spec = Window().partitionBy(primary_key).orderBy(\"EffectiveFrom\")\n",
+					"\n",
+					"new_df2 = new_df1 \\\n",
+					"    .withColumn('row_num', row_number().over(w)) \\\n",
+					"    .withColumn('IsActive',\n",
+					"        when(col('isDelete') == True, lit('0'))\n",
+					"        .when(col('row_num') == 1, lit('1'))\n",
+					"        .otherwise(lit('0'))\n",
+					"    ) \\\n",
+					"    .withColumn(\"EffectiveTo\",\n",
+					"        when(\n",
+					"            (col(\"IsActive\") == '0') & (col(\"EffectiveTo\").like(\"9999%\")),\n",
+					"            lead(\"EffectiveFrom\").over(window_spec)\n",
+					"        ).otherwise(col(\"EffectiveTo\"))\n",
+					"    ) \\\n",
+					"    .drop('row_num', \"_change_type\", \"_commit_timestamp\")\n",
+					"```\n",
+					"\n",
+					"**Key Points:**\n",
+					"\n",
+					"- `row_num` determines if a record is the latest version for its PK.  \n",
+					"  - `row_num = 1`: latest (IsActive = 1)  \n",
+					"  - Other rows for the same PK: historical (IsActive = 0)\n",
+					"- If a record is marked as `isDelete`, we set `IsActive = 0` explicitly.\n",
+					"- `EffectiveTo` of inactive records is updated to the `EffectiveFrom` of the subsequent (newer) record.\n",
+					"\n",
+					"### 3. Historical Merge with Delta Table\n",
+					"\n",
+					"Now that `new_df2` contains properly set `IsActive`, `EffectiveFrom`, and `EffectiveTo`, we perform a Delta MERGE operation into the target table (`bronze` table). This ensures that:\n",
+					"\n",
+					"- If there is a matching active record in `existing` for the same PK, it gets updated to `IsActive = 0` and `EffectiveTo = current_timestamp()`.\n",
+					"- All incoming records (`new_df3`) are then appended to ensure the query layer contains both new and old (historical) records.\n",
+					"\n",
+					"```python\n",
+					"from delta.tables import DeltaTable\n",
+					"\n",
+					"# Construct the ON condition for MERGE using all primary keys and IsActive flags\n",
+					"pk_list = primary_key\n",
+					"on_condition = ' AND '.join([f\"existing.{pk} = incoming.{pk}\" for pk in pk_list])\n",
+					"on_condition += \" AND existing.IsActive = '1' AND incoming.IsActive = '1'\"\n",
+					"\n",
+					"existing_table = DeltaTable.forName(spark, bronze_name)\n",
+					"\n",
+					"# Execute the MERGE\n",
+					"existing_table.alias(\"existing\") \\\n",
+					"    .merge(\n",
+					"        new_df2.alias(\"incoming\"),\n",
+					"        on_condition\n",
+					"    ) \\\n",
+					"    .whenMatchedUpdate(\n",
+					"        set={\n",
+					"            \"EffectiveTo\": \"current_timestamp()\",\n",
+					"            \"IsActive\": \"0\"\n",
+					"        }\n",
+					"    ) \\\n",
+					"    .execute()\n",
+					"\n",
+					"# Append all incoming records to the bronze layer\n",
+					"new_df2.write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"```\n",
+					"\n",
+					"**Key Points:**\n",
+					"\n",
+					"- **When Matched Update:**  \n",
+					"  If an existing active record matches the incoming active record by PK, we set the existing record’s `IsActive` to `0` and `EffectiveTo` to the current time, effectively closing it out.\n",
+					"  \n",
+					"- **Insert (Append):**  \n",
+					"  After closing out old records, we append all new versions (including newly active and any newly inserted records) into the table, ensuring full historical lineage is maintained.\n",
+					"\n",
+					"### Spark SQL Equivalent (Conceptual)\n",
+					"\n",
+					"While the above is in PySpark, the logic can be translated into Spark SQL steps. For illustrative purposes:\n",
+					"\n",
+					"```sql\n",
+					"-- Assume you have a staging view 'incoming_stage' that holds new_df1-style data\n",
+					"-- Step 1: Prepare incoming records\n",
+					"CREATE OR REPLACE TEMP VIEW incoming_stage AS\n",
+					"SELECT *, \n",
+					"       '1' AS IsActive,\n",
+					"       SinkCreatedOn AS EffectiveFrom,\n",
+					"       TIMESTAMP('9999-12-31 23:59:59.997') AS EffectiveTo\n",
+					"FROM batch_df1\n",
+					"WHERE _change_type IN ('update_postimage', 'insert');\n",
+					"\n",
+					"-- Step 2: Determine IsActive and EffectiveTo using window functions\n",
+					"WITH ranked AS (\n",
+					"  SELECT \n",
+					"    *,\n",
+					"    ROW_NUMBER() OVER (PARTITION BY <primary_keys> ORDER BY _commit_timestamp DESC) AS row_num\n",
+					"  FROM incoming_stage\n",
+					"),\n",
+					"final_incoming AS (\n",
+					"  SELECT *,\n",
+					"         CASE WHEN isDelete = true THEN '0'\n",
+					"              WHEN row_num = 1 THEN '1'\n",
+					"              ELSE '0'\n",
+					"         END AS IsActive,\n",
+					"         CASE WHEN IsActive = '0' AND EffectiveTo LIKE '9999%' THEN\n",
+					"              LEAD(EffectiveFrom) OVER (PARTITION BY <primary_keys> ORDER BY EffectiveFrom)\n",
+					"              ELSE EffectiveTo\n",
+					"         END AS EffectiveTo\n",
+					"  FROM ranked\n",
+					")\n",
+					"\n",
+					"-- Step 3: MERGE into Delta table\n",
+					"MERGE INTO bronze_table AS existing\n",
+					"USING final_incoming AS incoming\n",
+					"ON (existing.<pk1> = incoming.<pk1> AND ... AND existing.IsActive = '1' AND incoming.IsActive = '1')\n",
+					"\n",
+					"WHEN MATCHED THEN\n",
+					"  UPDATE SET\n",
+					"    existing.EffectiveTo = current_timestamp(),\n",
+					"    existing.IsActive = '0';\n",
+					"\n",
+					"-- Then INSERT new versions\n",
+					"INSERT INTO bronze_table\n",
+					"SELECT * FROM final_incoming;\n",
+					"```\n",
+					"\n",
+					"*(Note: The exact Spark SQL syntax may vary slightly depending on environment and the complexity of expressions.)*\n",
+					"\n",
+					"## Benefits\n",
+					"\n",
+					"- **Complete Historical Record:** Every historical version of each record is preserved.\n",
+					"- **Simple Recovery:** If something fails, re-running with full overwrite or rerunning the incremental logic ensures historical continuity.\n",
+					"- **Flexible Incremental Load:** Supports incremental updates via streaming or batch incremental feeds, reducing overhead.\n",
+					"\n",
+					"## Summary\n",
+					"\n",
+					"The outlined approach ensures an SCD Type 2-compliant historical trail. Using a combination of window functions, logical flags (`IsActive`), and Delta MERGE operations, the final query layer (bronze table) maintains a full history of record states over time.\n",
+					"\n",
+					"This documentation provides both conceptual and SQL-style references to aid in understanding and implementing the historical upsert logic."
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### **What happens when a table does not have incremental records**"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Historical Merge Logic for SCD Type 2 Changes\n",
+					"\n",
+					"This documentation outlines the technical approach for maintaining SCD (Slowly Changing Dimensions) Type 2 history using a combination of Synapse link tables and historical merge operations. By design, this solution ensures that **historical records are preserved** and that the **query layer** always reflects both current and past states of the data.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Overview\n",
+					"\n",
+					"The solution involves two main modes of operation, **Overwrite** and **Incremental**, supported by the presence of change data feed (CDF) logs. In scenarios where the Synapse link table does not have change data feed enabled, the framework gracefully handles the absence of the corresponding `_change_data` directory.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Modes of Operation\n",
+					"\n",
+					"### Overwrite Mode\n",
+					"\n",
+					"1. **Full Load from Synapse Link Table:**\n",
+					"   - Use `.read()` to retrieve the full current dataset from the source Synapse link table.\n",
+					"   - Load all current (active) records into the query layer, setting `IsActive = 1`, `EffectiveFrom` to the current load time, and `EffectiveTo` as a far-future date (e.g., `9999-12-31`).\n",
+					"\n",
+					"2. **Historical Merge:**\n",
+					"   - Read historical changes from the `cdf_logs` schema.\n",
+					"   - Perform a merge operation against the query layer to restore previous versions of the data as inactive (historical) records.\n",
+					"   \n",
+					"**Result:**  \n",
+					"The query layer contains both current and historical records, ensuring a complete SCD Type 2 representation.\n",
+					"\n",
+					"### Incremental Mode\n",
+					"\n",
+					"1. **Incremental Updates from CDF Logs:**\n",
+					"   - Use `.readStream()` against the `cdf_logs` schema to process only newly captured changes since the last run.\n",
+					"   - Update previously active records to `IsActive = 0` and insert the new active records.\n",
+					"   \n",
+					"**Result:**  \n",
+					"The query layer is incrementally updated, maintaining a full historical lineage.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Handling Absence of Change Data Feed (CDF)\n",
+					"\n",
+					"### Scenario\n",
+					"\n",
+					"If the Synapse link table does not have change data feed enabled, the associated `_change_data` folder will **not** be present. Consequently, there will be no `cdf_logs` data to read for incremental or historical merging operations.\n",
+					"\n",
+					"### Framework Behavior\n",
+					"\n",
+					"- The framework detects the absence of the `_change_data` directory in the source Synapse link table.\n",
+					"- Since `cdf_logs` schema relies on these incremental records, no CDF logs will be available for historical merging.\n",
+					"- The framework then logs an error message in the error log:\n",
+					"\n",
+					"  ``` \n",
+					"  error_message = \"NO CDC DATA FOUND FOR THIS TABLE. CHECK IF TABLE IS GETTING INCREMENTAL RECORDS. IF NOT IT IS STATIC TABLE. CARRY ON\"\n",
+					"  ```\n",
+					"\n",
+					"- This exception is caught and logged. The end user can verify whether the `_change_data` folder is truly absent, confirming that:\n",
+					"  - The table is static and does not produce incremental changes, or\n",
+					"  - CDF might not be enabled on this source.\n",
+					"\n",
+					"### End User Guidance\n",
+					"\n",
+					"If this error message appears, the user should:\n",
+					"\n",
+					"1. **Confirm CDC Configuration:**  \n",
+					"   Check if the Synapse link table is intended to have CDF enabled. If not, the absence of `_change_data` is normal, and the table can be considered static.\n",
+					"\n",
+					"2. **Static Table Handling:**  \n",
+					"   For static tables (no incremental changes):\n",
+					"   - The overwrite run will load the full set of current records.\n",
+					"   - No incremental runs or historical merges will occur, as no incremental changes exist.\n",
+					"\n",
+					"3. **If CDC Was Expected:**  \n",
+					"   Contact the data engineering team or review the Synapse environment to ensure that:\n",
+					"   - CDF is enabled on the source table.\n",
+					"   - The `_change_data` folder is present and accessible.\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Example of historical record tracking:"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"select * from fo_query.generaljournalaccountentry where  recid=\"5637152123\" ORDER BY EffectiveFrom DESC--and isDelete is null"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"## IsActive=1 records count in query layer should always match the source container table.(synapse link table)"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select count(*) from fo_query.generaljournalaccountentry where IsActive=1"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"select count(*) from dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry "
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"## Restoration of change data feed logs- disaster recovery"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Disaster Recovery Strategy for Change Data Feed (CDF) Logs\n",
+					"\n",
+					"This documentation outlines a strategy to recover change data feed (CDF) logs produced by Synapse Link tables in the event of extended downtime or a disaster scenario. By default, Synapse Link sets the CDF log retention to 2 days, after which `_change_data` parquet files are deleted. If the ingestion framework is not operational during this time, historical change data may be lost.\n",
+					"\n",
+					"To mitigate this, we recommend enabling soft delete on the storage account. This enables the recovery of deleted blobs for up to 90 days, providing a significantly larger window to restore critical CDF logs.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Background\n",
+					"\n",
+					"- **Default CDF Retention:** CDF logs are automatically deleted after 48 hours by Synapse Link.\n",
+					"- **Risk of Data Loss:** If ingestion is paused (e.g., due to a disaster) for more than 48 hours, CDF logs are gone, resulting in permanent data loss.\n",
+					"- **Soft Delete on Storage:** Enabling soft delete keeps a hidden copy of deleted blobs for a configured retention period (e.g., 90 days), allowing recovery through Azure CLI, PowerShell, or portal.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Prerequisites\n",
+					"\n",
+					"1. **Soft Delete Enabled at Storage Account Level:**  \n",
+					"   Ensure the Data Lake Storage Gen2 account used by Synapse Link has soft delete enabled. Configure soft delete retention (e.g., 90 days) to align with your disaster recovery window.\n",
+					"\n",
+					"2. **Azure CLI or PowerShell Access:**  \n",
+					"   Have CLI tools and proper permissions set up to view and restore deleted blobs.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Disaster Recovery Steps\n",
+					"\n",
+					"1. **Check Manually for Hidden Files in Storage Account:**\n",
+					"   - Navigate to the Azure Storage Account in the Azure Portal.\n",
+					"   - Go to the container or file system associated with your Synapse Link.\n",
+					"   - Look for hidden/deleted paths related to `_change_data` directories.  \n",
+					"   If soft delete is enabled, these deleted paths are listed as \"recoverable.\"\n",
+					"\n",
+					"2. **Execute Restoration Script to Restore Blobs in `_change_data` Folder:**\n",
+					"   Utilize the Azure CLI script (sample below) to programmatically restore all `_change_data` logs:\n",
+					"\n",
+					"   ```bash\n",
+					"   az login\n",
+					"\n",
+					"   STORAGE_ACCOUNT_NAME=\"chemdeveussa\"\n",
+					"   FILE_SYSTEM_NAME=\"dataverse-chemonicscrm-chemonics\"\n",
+					"   SIXTY_DAYS_AGO=$(date -u -d \"60 days ago\" +%Y-%m-%dT%H:%M:%SZ)\n",
+					"\n",
+					"   az storage fs list-deleted-path \\\n",
+					"   --account-name $STORAGE_ACCOUNT_NAME \\\n",
+					"   --file-system $FILE_SYSTEM_NAME \\\n",
+					"   --auth-mode login \\\n",
+					"   --query \"[?deletedTime >= '$SIXTY_DAYS_AGO'].[name,deletionId]\" \\\n",
+					"   --output tsv | while read -r PATH_NAME DELETION_ID; do\n",
+					"       if [[ \"$PATH_NAME\" == *\"_change_data\"* ]]; then\n",
+					"           echo \"Restoring path: $PATH_NAME with Deletion ID: $DELETION_ID\"\n",
+					"           az storage fs undelete-path \\\n",
+					"           --account-name $STORAGE_ACCOUNT_NAME \\\n",
+					"           --file-system $FILE_SYSTEM_NAME \\\n",
+					"           --deleted-path-name \"$PATH_NAME\" \\\n",
+					"           --deletion-id \"$DELETION_ID\" \\\n",
+					"           --auth-mode login\n",
+					"       fi\n",
+					"   done\n",
+					"   ```\n",
+					"\n",
+					"   **What this does:**\n",
+					"   - Lists all deleted paths in the past 60 days (adjust as needed).\n",
+					"   - Filters for those containing `_change_data`.\n",
+					"   - Restores each deleted `_change_data` blob to its original location.\n",
+					"\n",
+					"3. **Execute Framework as Overwrite:**\n",
+					"   After the `_change_data` logs are restored, run the ingestion framework in **overwrite mode**. This ensures:\n",
+					"   - The entire current state is reloaded from the Synapse Link table into the query layer.\n",
+					"   - All restored `_change_data` files are processed into the `cdf_logs` schema, effectively \"backfilling\" the missing history.\n",
+					"   \n",
+					"   Once the overwrite run completes, the framework’s internal logic:\n",
+					"   - Maintains full SCD Type 2 history in the query layer.\n",
+					"   - Re-establishes the state so that normal incremental runs can resume without data loss.\n",
+					"\n",
+					"4. **Validate All Records in the Query Layer:**\n",
+					"   After the overwrite and historical merge are complete:\n",
+					"   - Use your validation or audit queries to confirm that all expected records are present.\n",
+					"   - Verify that `IsActive` flags, `EffectiveFrom`, and `EffectiveTo` timestamps are correctly assigned.\n",
+					"   - Confirm that no historical information has been lost.\n",
+					"\n",
+					""
+				]
+			}
+		]
+	}
+}

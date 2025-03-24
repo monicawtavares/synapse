@@ -1,0 +1,988 @@
+{
+	"name": "CDFKT",
+	"properties": {
+		"folder": {
+			"name": "Arhitecture"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "068e9d98-bd96-4e3c-a3ff-fd9fd91c7717"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"![image-alt-text](https://www.databricks.com/wp-content/uploads/2021/06/How-to-Simplify-CDC-with-Delta-Lakes-Change-Data-Feed-blog-img-3.jpg)"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"## Change Data Feed in Delta Lake\n",
+					"\n",
+					"####  **What is it?**\n",
+					"\n",
+					"##### Change Data Feed (CDF) is a feature in Delta Lake that allows for the tracking of row-level changes between versions of a Delta table. \n",
+					"\n",
+					"#### **how is CDF recorded?**\n",
+					"##### If a table has CDF enabled, and a write ( any type of write) happens on the table, it will automatically also log the cdc records in a directory called _change_data as parquet files.\n",
+					"\n",
+					"\n",
+					"****Overview of Change Data Feed (CDF)****\n",
+					"\n",
+					"- **Row-Level Tracking**: CDF captures changes at the row level, recording whether a row was **inserted, updated, or deleted**.\n",
+					"  \n",
+					"- **Integration with Structured Streaming**: CDF is designed to work seamlessly with Structured Streaming in Spark, allowing for incremental processing of changes at scale.\n",
+					"\n",
+					"- **Change Events**: When CDF is enabled on a Delta table, it generates change events that include both the data and **metadata about the changes**.\n",
+					"\n",
+					"- **Retention Policy**: The change data is transient and accessible only for a specified retention window; **older versions are purged regularly from the transaction log. (2 days File retention for synapse link tables)**\n",
+					"\n",
+					"- **Batch and Streaming Support**: CDF supports both batch queries and streaming queries, making it versatile for various data processing needs.\n",
+					"\n",
+					"****Comparison with Traditional Methods****\n",
+					"\n",
+					"| Feature                     | Change Data Feed (CDF)                      | Traditional Methods (e.g., Triggers, Audit Tables) |\n",
+					"|-----------------------------|---------------------------------------------|-----------------------------------------------------|\n",
+					"| **Data Granularity**        | Row-level changes                           | Typically captures entire rows or snapshots         |\n",
+					"| **Performance Impact**      | Minimal impact due to log-based tracking    | Higher impact due to additional overhead from triggers |\n",
+					"| **Real-Time Processing**    | Supports near real-time data processing     | Often requires batch processes                       |\n",
+					"| **Storage Efficiency**      | Stores only changes, reducing storage needs | Stores full snapshots or logs, increasing storage    |\n",
+					"| **Historical Tracking**     | Limited to changes after enabling CDF       | Can maintain full historical records indefinitely    |\n",
+					"| **Complexity of Setup**     | Easier setup with built-in features         | Requires manual setup of triggers and audit tables   |\n",
+					"\n",
+					"****Advantages of Change Data Feed for our use case****\n",
+					"\n",
+					"- **Efficiency in ETL Processes**: By capturing only incremental changes, CDF simplifies ETL processes and reduces data transfer volumes.\n",
+					"\n",
+					"- **Enhanced Performance**: CDF allows for faster query performance by focusing on changed rows rather than entire datasets. CDF reads do not to a full table scan, reads are done on _change_data directory which has CDF logs\n",
+					"\n",
+					"- **Audit Capabilities**: Each and every commmit ( pre image and post image ) on every row that has ever happened will be recorded. Provides an efficient way to maintain an audit trail without the need for complex trigger setups.\n",
+					"\n",
+					"- **Flexible Querying Options**: Supports both batch and streaming queries, making it adaptable to various use cases in data engineering.\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"****Enabling Change Data Feed****\n",
+					"\n",
+					"- **New or Existing Delta tables in Synapse**: use the `ALTER TABLE` command to enable CDF.\n",
+					"\n",
+					"- **Global Setting**: You can also enable CDF for all new tables by setting a global configuration property. Global spark setting"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"ALTER TABLE crm_query.actioncard\n",
+					"SET TBLPROPERTIES (delta.enableChangeDataFeed = true);\n",
+					""
+				],
+				"execution_count": 20
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### **Check all table properties of a Delta Table**\n",
+					"\n",
+					"###### - Change data feed should always be true for source tables\n",
+					"###### - LogRetentionDuration is responsible for how the long the change data feed logs will be available."
+				]
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"def get_table_properties(table_name):\n",
+					"    return ((spark.sql(f\"DESCRIBE TABLE EXTENDED {table_name}\").collect()[-1]['data_type']).replace(\"[\",\"\").replace(\"]\",\"\")).split(',')\n",
+					"\n",
+					"get_table_properties(\"dataverse_chemonicscrm_chemonics.account\")"
+				],
+				"execution_count": 22
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### See what is going on in a delta table. Counts of all operation types in a delta table"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"def count_operations_in_history(table_name):\n",
+					"    # Import required functions\n",
+					"    from pyspark.sql import functions as F\n",
+					"    \n",
+					"    # Run DESCRIBE HISTORY command\n",
+					"    history_df = spark.sql(f\"DESCRIBE HISTORY {table_name}\")\n",
+					"    \n",
+					"    # Count the number of occurrences of each operation type\n",
+					"    write_count = history_df.filter(F.col(\"operation\") == \"WRITE\").count()\n",
+					"    merge_count = history_df.filter(F.col(\"operation\") == \"MERGE\").count()\n",
+					"    vacuum_count = history_df.filter(F.col(\"operation\") == \"VACUUM\").count()\n",
+					"    optimize_count = history_df.filter(F.col(\"operation\") == \"OPTIMIZE\").count()\n",
+					"    alter_count = history_df.filter(F.col(\"operation\")==\"SET TBLPROPERTIES\").count()\n",
+					"    \n",
+					"    # Return the counts as a list with formatted strings\n",
+					"    return [\n",
+					"        f\"write_count: {write_count}\",\n",
+					"        f\"merge_count: {merge_count}\",\n",
+					"        f\"vacuum_count: {vacuum_count}\",\n",
+					"        f\"optimize_count: {optimize_count}\",\n",
+					"        f\"set_properties_count: {alter_count}\"\n",
+					"    ]\n",
+					"\n",
+					"# Example usage\n",
+					"# Replace 'dataverse_chemonicscrm_chemonics.account' with your actual table name\n",
+					"count_operations_in_history(\"crm_query.account\")\n",
+					"\n",
+					""
+				],
+				"execution_count": 35
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Query change data feed logs generated by Synapse link tables\n",
+					"\n",
+					"- use table_changes() for adhoc analysis\n",
+					"- use .read and .readstream for data engineering"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### Using table_changes to Query Change Data\n",
+					"###### - The table_changes function lets you query data changes between specific versions or timestamps. Here’s the syntax:\n",
+					"###### - As these files are already generated by the delta log, we dont have to compute the cdc difference. And there is no table scan. instant query response"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"desc history dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry"
+				],
+				"execution_count": 24
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"select * from table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry',1259,1272)--starting version first, then ending version. can also use timestamp"
+				],
+				"execution_count": 23
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### **Compared** to doing minus querys between full table versions to figure out changes\n",
+					"- very compute intensive, time consuming"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT * FROM dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry VERSION AS OF 1272\n",
+					"EXCEPT\n",
+					"SELECT * FROM dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry VERSION AS OF 1260\n",
+					""
+				],
+				"execution_count": 25
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### **Change data feed will record each and every commit on each row**.\n",
+					"- output will show multiple version entries for most keys"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql \n",
+					"\n",
+					"SELECT \n",
+					"    recid, \n",
+					"    COUNT(*) AS record_count\n",
+					"FROM \n",
+					"    table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					"GROUP BY \n",
+					"    recid\n",
+					""
+				],
+				"execution_count": 26
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"###### **Based on primary key and commit columns, each entry is unique**"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT \n",
+					"    recid, \n",
+					"    _change_type, \n",
+					"    _commit_version, \n",
+					"    _commit_timestamp,\n",
+					"    COUNT(*) AS record_count\n",
+					"FROM \n",
+					"    table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					"WHERE \n",
+					"    recid = 5637638939\n",
+					"GROUP BY \n",
+					"    recid, \n",
+					"    _change_type, \n",
+					"    _commit_version, \n",
+					"    _commit_timestamp\n",
+					""
+				],
+				"execution_count": 27
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"Here's a Markdown documentation detailing the columns used in Delta Lake's Change Data Feed (CDF):\n",
+					"\n",
+					"---\n",
+					"\n",
+					"# Delta Lake Change Data Feed (CDF) Columns\n",
+					"\n",
+					"Delta Lake’s Change Data Feed enables users to track changes (like inserts, updates, and deletes) in Delta tables efficiently. When CDF is enabled, Delta Lake provides metadata columns that capture the details of changes in the table. Here’s an overview of some key CDF columns:\n",
+					"\n",
+					"## `_change_type`\n",
+					"- **Description**: The `_change_type` column indicates the type of modification made to the row.\n",
+					"- **Possible Values**:\n",
+					"  - **`insert`**: A new row was added.\n",
+					"  - **`update_preimage`**: The old version of a row that was updated.\n",
+					"  - **`update_postimage`**: The new version of a row after an update.\n",
+					"  - **`delete`**: A row was deleted.\n",
+					"- **Use Case**: This column is useful for understanding the nature of each change, especially when processing incremental data and when you need to track specific actions like updates or deletions.\n",
+					"\n",
+					"## `_commit_version`\n",
+					"- **Description**: `_commit_version` represents the specific version of the Delta Lake transaction in which the change occurred.\n",
+					"- **Type**: Integer\n",
+					"- **Use Case**: This column helps to identify the transaction in which each change was made, allowing users to track changes over time and correlate them with Delta table versions for rollback or auditing purposes.\n",
+					"\n",
+					"## `_commit_timestamp`\n",
+					"- **Description**: The `_commit_timestamp` column records the exact time (in UTC) when the change was committed to the Delta Lake table.\n",
+					"- **Type**: Timestamp\n",
+					"- **Use Case**: This column provides a temporal dimension to changes, enabling users to analyze change patterns over time. It’s also helpful for time-based queries, such as retrieving changes within a specific time range.\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT distinct(_change_type)\n",
+					"FROM \n",
+					"    table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					""
+				],
+				"execution_count": 28
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"SELECT `_change_type`, COUNT(*) AS change_type_count\n",
+					"FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					"GROUP BY `_change_type`"
+				],
+				"execution_count": 29
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"WITH latest_changes AS (\n",
+					"    SELECT *, \n",
+					"           ROW_NUMBER() OVER (PARTITION BY recid ORDER BY `_commit_timestamp` DESC) AS row_num\n",
+					"    FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					")\n",
+					"\n",
+					"SELECT count(*)\n",
+					"FROM latest_changes\n",
+					"WHERE (`_change_type` = 'update_postimage' OR `_change_type` = 'insert' OR `_change_type` = 'delete') AND row_num != 1\n",
+					""
+				],
+				"execution_count": 30
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\n",
+					"##### This code uses Spark SQL to track how a specific record (`recid = 5637152875`) changes over time based on commits in a Delta Lake table enabled with Change Data Feed (CDF).\n",
+					"\n",
+					"1. **`table_changes` Function**: Fetches changes for the specified table between two commit versions (`1259` to `1272`).\n",
+					"   - Only includes records with `_change_type` of `'update_postimage'`, `'insert'`, or `'delete'`.\n",
+					"\n",
+					"2. **`ROW_NUMBER` Window Function**: Assigns a row number to each change for the same `recid`, ordered by `_commit_timestamp` in descending order. This helps identify the latest change for each record.\n",
+					"\n",
+					"3. **Filtering by Record ID**: The outer `SELECT` retrieves all change records for the specified `recid` to analyze how it has been modified across commits.\n",
+					"\n",
+					"This query allows you to track and review each commit's impact on a record, displaying each versioned change in chronological order."
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"WITH latest_changes AS (\n",
+					"    SELECT *, \n",
+					"           ROW_NUMBER() OVER (PARTITION BY recid ORDER BY `_commit_timestamp` DESC) AS row_num\n",
+					"    FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272) \n",
+					"    WHERE (`_change_type` = 'update_postimage' OR `_change_type` = 'insert' OR `_change_type` = 'delete')\n",
+					")\n",
+					"\n",
+					"SELECT *\n",
+					"FROM latest_changes\n",
+					"WHERE recid = 5637152875 \n",
+					""
+				],
+				"execution_count": 31
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### These are the latest/active records based on recid and _commit_timestamp"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"WITH latest_changes AS (\n",
+					"    SELECT *, \n",
+					"           ROW_NUMBER() OVER (PARTITION BY recid ORDER BY `_commit_timestamp` DESC) AS row_num\n",
+					"    FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272)\n",
+					"     WHERE (`_change_type` = 'update_postimage' OR `_change_type` = 'insert' OR `_change_type` = 'delete')\n",
+					")\n",
+					"\n",
+					"SELECT `_change_type`,COUNT(*) AS change_type_count\n",
+					"FROM latest_changes\n",
+					"WHERE row_num = 1\n",
+					"GROUP BY `_change_type`\n",
+					""
+				],
+				"execution_count": 32
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### These are the old records/inactive records with rownum!=1"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"WITH latest_changes AS (\n",
+					"    SELECT *, \n",
+					"           ROW_NUMBER() OVER (PARTITION BY recid ORDER BY `_commit_timestamp` DESC) AS row_num\n",
+					"    FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272) \n",
+					"    WHERE (`_change_type` = 'update_postimage' OR `_change_type` = 'insert' OR `_change_type` = 'delete')\n",
+					")\n",
+					"\n",
+					"SELECT `_change_type`,COUNT(*) AS change_type_count\n",
+					"FROM latest_changes\n",
+					"WHERE row_num != 1\n",
+					"GROUP BY `_change_type`\n",
+					""
+				],
+				"execution_count": 33
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Solution to persist all cdf logs in data platform\n",
+					"- everytime framework runs, read logs folder _change_data, and merge to cdf_logs schema\n",
+					"- read will just include 2 days of logs to merge into cdf_logs at any given point. merge will be efficient\n",
+					" - condition target.Id = source.Id AND target.commit_timestamp = source.commit_timestamp and target.change_type = source.change_type )\n",
+					" - function documentation for persist_cdf_logs can be found in framework notebook"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"Here's a concise documentation summary for the `persist_cdf_logs` function:\n",
+					"\n",
+					"---\n",
+					"\n",
+					"### `persist_cdf_logs`\n",
+					"\n",
+					"**Purpose**: \n",
+					"Manages Change Data Feed (CDF) logs by creating or updating a Delta table to store change data from a specified source path. If the target Delta table does not exist, the function creates it and saves the data. If it does exist, it performs a merge operation to update it with new data.\n",
+					"\n",
+					"**Parameters**:\n",
+					"- **`source_path`** *(str)*: Directory path for the source change data in Parquet format.\n",
+					"- **`primary_key`** *(str)*: Comma-separated primary key column names to uniquely identify records.\n",
+					"- **`bronze_name`** *(str)*: Bronze table name, used to generate the target CDF table name.\n",
+					"- **`cdf_path`** *(str)*: Directory path to store the Delta table for CDF logs.\n",
+					"\n",
+					"**Process**:\n",
+					"1. **Database and Table Check**: Checks if the target Delta table (`cdf_logs.<generated_table_name>`) exists.\n",
+					"   - **If not**: Reads CDF data from `source_path`, adds a `commit_timestamp` column, and saves it as a new Delta table.\n",
+					"   - Configures retention (`90 days`) and enables CDF on the Delta table.\n",
+					"2. **Merge Update**: If the Delta table already exists:\n",
+					"   - Reads new change data, adds `commit_timestamp`.\n",
+					"   - Merges it with the existing Delta table based on primary key, `commit_timestamp`, and `change_type`.\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"from notebookutils import mssparkutils\n",
+					"\n",
+					"source_path = \"abfss://{}@{}.dfs.core.windows.net/{}\".format(\"dataverse-chemonicscrm-chemonics\", \"chemdeveussa\", \"deltalake/account_partitioned/_change_data\")\n",
+					"display(spark.read.parquet(source_path))"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Persisted logs in data platform. \n",
+					"- log retention at 90 days ( can be increased to 360 as well)- continous streaming available downstream\n",
+					"- no data deletion schedules\n",
+					"- logs accumulate but table will be auto optimized with each merge"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"get_table_properties(\"cdf_logs.crm_query_account_cdc\")"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"get_table_properties(\"cdf_logs.crm_query_account_cdc\")"
+				],
+				"execution_count": 16
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"count_operations_in_history(\"cdf_logs.fo_query_generaljournalaccountentry_cdc\")"
+				],
+				"execution_count": 36
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"count_operations_in_history(\"cdf_logs.fo_query_generaljournalaccountentry_cdc\")"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"desc history cdf_logs.fo_query_generaljournalaccountentry_cdc"
+				],
+				"execution_count": 14
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"## Enabling full historical merge "
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"##### **Determine** isActive 0 and 1 records based on commit_timestamp and key, change_type.\n",
+					"- rownum=1 will be highlighted as isActive=1 before merge\n",
+					"- rownum!=1 will be highlighted as isActive=0 before merge\n",
+					"- merge on source.isActive=1 and target.isActive=1 and other keys, and _commit_timestamp > target.sinkcreatedon ( to ensure isActive=1 is 100% an active record)\n",
+					"- inside merge ( when matched update isActive: 0, and EffectiveTO: current_timestamp())\n",
+					"- insert all isActive=0 records\n",
+					"\n",
+					"\n",
+					"\n",
+					"##### **Framework adjustments needed**\n",
+					"\n",
+					"- readStream to be done from cdf_logs schema instead of source containers (dataverse_chemonicscrm_chemonics)\n",
+					"- include isActive=0 when rownum!=1\n",
+					"- adjust merge condition\n",
+					"- handle cases where incremental not there (for those tables that dont have any cdf yet)\n",
+					"\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"WITH latest_changes AS (\n",
+					"    SELECT *, \n",
+					"           ROW_NUMBER() OVER (PARTITION BY recid ORDER BY `_commit_timestamp` DESC) AS row_num\n",
+					"    FROM table_changes('dataverse_ovuuat_unq171039361454ef11bfdf002248322.generaljournalaccountentry', 1259, 1272) \n",
+					"    WHERE (`_change_type` = 'update_postimage' OR `_change_type` = 'insert' OR `_change_type` = 'delete')\n",
+					")\n",
+					"\n",
+					"SELECT *,\n",
+					"       CASE WHEN row_num = 1 THEN 1 ELSE 0 END AS isActive\n",
+					"FROM latest_changes\n",
+					"WHERE recid = 5637152875;\n",
+					""
+				],
+				"execution_count": 17
+			}
+		]
+	}
+}
