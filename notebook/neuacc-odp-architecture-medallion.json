@@ -1,0 +1,438 @@
+{
+	"name": "neuacc-odp-architecture-medallion",
+	"properties": {
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "b6ad1054-5229-4177-b7c7-9d50506d5d9e"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Framework notebook execution to initialize underlying functions used:"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 36
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/logging/neuacc-odp-logging"
+				],
+				"execution_count": 37
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from pyspark.sql.functions import *\n",
+					"from delta.tables import *\n",
+					"from pyspark.sql.functions import expr\n",
+					"import networkx as nx # added as library to cluster"
+				],
+				"execution_count": 38
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Parameter Cell for Reusable Code Components  \n",
+					"\n",
+					"- **target_table_category**: specifies the table category prefix which will be run for categories tied to each layer (query and sanctioned). These category prefixes correlate to the metadata fields for target_table_category in file_ingestion and table definition  for eg crm\n",
+					"- **overwrite**: can be \"yes\" or \"no\" and will determine if data is loaded to the taget table as an overwrite or incremental merge  \n",
+					"\n",
+					"- **target_table_name**: specifies the target fact table which will be loaded in the sanctioned later and is used to isolate independent sequencing for fact tables. The table name correlates to the metadata field for target_table_name in table definition.  eg Fact_Opportunity\n",
+					"- **metadataschema**: will be \"frameworkdb\""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"target_table_category = \"\"#crm\n",
+					"target_table_name = \"\"#Fact_Opportunity\n",
+					"metadata_schema = \"\"#'frameworkdb'\n",
+					"pipeline_id = \"\"#1\n",
+					"overwrite=\"\"#no"
+				],
+				"execution_count": 39
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"advisor": {
+						"adviceMetadata": "{\"artifactId\":\"7c1f0a83-9fba-4891-8704-d293c7eed8f1\",\"activityId\":\"11b39577-00f6-493e-a33b-7dbcffbb2b30\",\"applicationId\":\"application_1719987119547_0001\",\"jobGroupId\":\"19\",\"advices\":{\"error\":1}}"
+					}
+				},
+				"source": [
+					"target_name_list=[x.strip() for x in target_table_name.split(\",\")]\n",
+					"readMetadata = metadataReader(metadata_schema)\n",
+					"#logTables = insert_logging(metadata_schema)\n",
+					"fact_name = f'{target_table_category}_sanctioneddb.{target_table_name}'\n",
+					"fact_schema = f'{target_table_category}_sanctioneddb'\n",
+					"spark.sql(\"CREATE SCHEMA IF NOT EXISTS \" + fact_schema)"
+				],
+				"execution_count": 40
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"eastern = pytz.timezone('US/Eastern')\n",
+					"spark.conf.set(\"spark.sql.streaming.metricsEnabled\", \"true\")"
+				],
+				"execution_count": 41
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Script Documentation\n",
+					"\n",
+					"This script performs parallel processing on tables based on a specified target table category. It uses `ThreadPoolExecutor` from Python's `concurrent.futures` module to process multiple tables concurrently, either in a flat or ordered structure. The results of each table's processing are collected, and any errors encountered during processing are logged and stored.\n",
+					"\n",
+					"### Table of Contents\n",
+					"- [Imports](#imports)\n",
+					"- [Parameters](#parameters)\n",
+					"- [Functions](#functions)\n",
+					"  - [process_sublist](#process_sublist)\n",
+					"- [Execution Flow](#execution-flow)\n",
+					"  - [Processing \"fo\" Category Tables](#processing-fo-category-tables)\n",
+					"  - [Processing Other Tables](#processing-other-tables)\n",
+					"\n",
+					"---\n",
+					"\n",
+					"### Imports\n",
+					"\n",
+					"```python\n",
+					"from concurrent.futures import ThreadPoolExecutor, as_completed\n",
+					"from itertools import chain\n",
+					"```\n",
+					"\n",
+					"- **ThreadPoolExecutor**: Allows concurrent execution of tasks across multiple threads.\n",
+					"- **as_completed**: Enables iteration over completed tasks.\n",
+					"- **chain**: Used for flattening nested lists.\n",
+					"\n",
+					"### Parameters\n",
+					"- **target_table_category** (str): Defines the category of tables to process (e.g., \"fo\").\n",
+					"- **target_table_name** (str): A comma-separated list of target table names.\n",
+					"- **metadata_schema** (str): The schema used for ordering tables.\n",
+					"\n",
+					"### Functions\n",
+					"\n",
+					"#### process_sublist\n",
+					"\n",
+					"```python\n",
+					"def process_sublist(sublist):\n",
+					"    sublist_results = []\n",
+					"    for table in sublist:\n",
+					"        try:\n",
+					"            result = process_table(table)\n",
+					"            sublist_results.append(result)\n",
+					"        except Exception as e:\n",
+					"            error_message = f\"An error occurred processing table {table}: {e}\"\n",
+					"            print(error_message)\n",
+					"            sublist_results.append(error_message)\n",
+					"            continue\n",
+					"    return sublist_results\n",
+					"```\n",
+					"\n",
+					"- **Description**: Processes each table in a given sublist and appends the result to `sublist_results`.\n",
+					"- **Parameters**:\n",
+					"  - **sublist** (list): A list of table names.\n",
+					"- **Returns**: `sublist_results` containing either results or error messages.\n",
+					"\n",
+					"### Execution Flow\n",
+					"\n",
+					"#### Processing \"fo\" Category Tables\n",
+					"If the **target_table_category** is \"fo\":\n",
+					"\n",
+					"- **Extract Target Tables**:\n",
+					"  - `target_table_name_list` is created by splitting `target_table_name` into individual table names.\n",
+					"- **Determine Execution Order**:\n",
+					"  - For each table, `get_table_order` is used to determine the execution order.\n",
+					"  - `final_execution_order` flattens the order for concurrent execution.\n",
+					"- **Process Tables in Parallel**:\n",
+					"  - A `ThreadPoolExecutor` with `max_workers` set to the length of `final_execution_order` is created.\n",
+					"  - Each sublist in `final_execution_order` is processed using `process_sublist`.\n",
+					"  - Results and errors are appended to `results`.\n",
+					"\n",
+					"#### Processing Other Tables\n",
+					"For other categories:\n",
+					"\n",
+					"- **Extract Target Tables**:\n",
+					"  - `target_table_name_list` is created as above.\n",
+					"- **Determine Execution Order**:\n",
+					"  - `get_table_order` provides ordered execution steps.\n",
+					"- **Process Tables**:\n",
+					"  - For each step, if multiple tables are present, they are processed concurrently using a `ThreadPoolExecutor`.\n",
+					"  - If only one table is present, it is processed directly by calling `process_table`.\n",
+					"- **Error Handling**:\n",
+					"  - Errors encountered in any table processing are printed and appended to `results`.\n",
+					"\n",
+					"### Example Usage\n",
+					"\n",
+					"```python\n",
+					"results = []\n",
+					"\n",
+					"# Set parameters\n",
+					"target_table_category = \"fo\"\n",
+					"target_table_name = \"table1, table2, table3\"\n",
+					"metadata_schema = \"example_schema\"\n",
+					"\n",
+					"# Run the script\n",
+					"# (Assuming process_table and get_table_order are defined elsewhere)\n",
+					"```\n",
+					"\n",
+					"### Notes\n",
+					"- **Error Handling**: Errors are caught at both the table and sublist levels, allowing the script to continue processing other tables even if one fails.\n",
+					"- **Concurrency**: `ThreadPoolExecutor` allows for parallel processing, which improves performance when handling multiple tables.\n",
+					"- **Results Storage**: All results, including error messages, are stored in the `results` list for later use or inspection."
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from concurrent.futures import ThreadPoolExecutor, as_completed\n",
+					"from itertools import chain\n",
+					"\n",
+					"results = []\n",
+					"\n",
+					"if target_table_category == \"fo\":\n",
+					"    def process_sublist(sublist):\n",
+					"        sublist_results = []\n",
+					"        for table in sublist:\n",
+					"            try:\n",
+					"                result = process_table(table)\n",
+					"                sublist_results.append(result)\n",
+					"            except Exception as e:\n",
+					"                error_message = f\"An error occurred processing table {table}: {e}\"\n",
+					"                print(error_message)\n",
+					"                sublist_results.append(error_message)\n",
+					"                continue\n",
+					"        return sublist_results\n",
+					"\n",
+					"    target_table_name_list = [name.strip() for name in target_table_name.split(',')]\n",
+					"    final_execution_order = []\n",
+					"\n",
+					"    for x in target_table_name_list:\n",
+					"        tableOrder = get_table_order(target_table_category, x, metadata_schema)\n",
+					"        final_execution_order.append(list(chain.from_iterable(tableOrder)))\n",
+					"\n",
+					"    with ThreadPoolExecutor(max_workers=len(final_execution_order)) as executor:\n",
+					"        futures = {executor.submit(process_sublist, sublist): sublist for sublist in final_execution_order}\n",
+					"        for future in as_completed(futures):\n",
+					"            sublist = futures[future]\n",
+					"            try:\n",
+					"                sublist_results = future.result()\n",
+					"                results.extend(sublist_results)\n",
+					"            except Exception as e:\n",
+					"                error_message = f\"An error occurred in sublist {sublist}: {e}\"\n",
+					"                print(error_message)\n",
+					"                results.append(error_message)\n",
+					"\n",
+					"else:\n",
+					"    target_table_name_list = [name.strip() for name in target_table_name.split(',')]\n",
+					"\n",
+					"    for x in target_table_name_list:\n",
+					"        tableOrder = get_table_order(target_table_category, x, metadata_schema)\n",
+					"        print(', '.join([f\"STEP {i+1}: {', '.join(step)}\" for i, step in enumerate(tableOrder)]))\n",
+					"        for tables in tableOrder:\n",
+					"            if len(tables) > 1:\n",
+					"                with ThreadPoolExecutor(max_workers=len(tables)) as executor:\n",
+					"                    futures = {executor.submit(process_table, table): table for table in tables}\n",
+					"                    for future_task in as_completed(futures):\n",
+					"                        table = futures[future_task]\n",
+					"                        try:\n",
+					"                            result = future_task.result()\n",
+					"                            results.append(result)\n",
+					"                        except Exception as e:\n",
+					"                            error_message = f\"An error occurred processing table {table}: {e}\"\n",
+					"                            print(error_message)\n",
+					"                            results.append(error_message)\n",
+					"            else:\n",
+					"                try:\n",
+					"                    result = process_table(tables[0])\n",
+					"                    results.append(result)\n",
+					"                except Exception as e:\n",
+					"                    error_message = f\"An error occurred processing table {tables[0]}: {e}\"\n",
+					"                    print(error_message)\n",
+					"                    results.append(error_message)\n",
+					""
+				],
+				"execution_count": 49
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Logging step \n",
+					"- Append logs to logging table.\n",
+					"- Output string to send out appropriate email of error log\n",
+					"- function can be found in %run neudesic-odp/logging/neuacc-odp-logging"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"try:\n",
+					"    append_error_log([[x.split(',')[0],(x.split(',')[1]).strip()] for x in results if x!=None and \"SUCCESS\" not in x], target_table_category)\n",
+					"    mssparkutils.notebook.exit(\"ERROR LOG APPENDED\")\n",
+					"except Exception as e:\n",
+					"    if \"can not infer schema from empty dataset\" in str(e):\n",
+					"        mssparkutils.notebook.exit(\"ALL SUCCEEDED\")\n",
+					""
+				],
+				"execution_count": null
+			}
+		]
+	}
+}
