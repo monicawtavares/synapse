@@ -1,0 +1,204 @@
+{
+	"name": "Hydration_TransactionDetailsReport",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/abacus"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "266fdfdf-e751-4ec7-a850-55bc67ebda8e"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 8
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 9
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": 10
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.sql(f\"\"\"\n",
+					"CREATE OR REPLACE TABLE abacus_sanctioneddb.TransactionDetailsReport\n",
+					"USING DELTA\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/abacus_sanctioneddb.Lakehouse/Tables/TransactionDetailsReport'\n",
+					"AS\n",
+					"WITH OfficeDetails AS (\n",
+					"    SELECT \n",
+					"        o.officeid,\n",
+					"        o.officename,\n",
+					"        pDyn.Department AS DynDepartment,\n",
+					"        pDyn.DepartmentName AS DynDepartmentName,\n",
+					"        pSol.RegionID AS SolRegionID,\n",
+					"        r.regionname AS SolRegionName,\n",
+					"        COALESCE(pDyn.Department, pSol.RegionID) AS RegionCode,\n",
+					"        COALESCE(pDyn.DepartmentName, r.regionname) AS RegionName,\n",
+					"        o.isdeleted,\n",
+					"        o.enddate,\n",
+					"        o.IsActive\n",
+					"    FROM abacus_query.office o\n",
+					"    LEFT JOIN abacus_query.officegroup og ON o.isdeleted = 0 AND o.IsActive=1 AND og.isdeleted = 0 AND og.IsActive=1 AND o.officegroupid = og.officegroupid\n",
+					"    LEFT JOIN abacus_query.Dyn_Project pDyn ON og.PrimaryDynamicsProjectCode = pDyn.ProjectID AND pDyn.isdeleted = 0 AND pDyn.IsActive=1\n",
+					"    LEFT JOIN abacus_query.SolomonProjectCode pSol ON og.primaryprojectcode = pSol.ProjectCode AND pSol.isdeleted = 0 AND pSol.IsActive=1\n",
+					"    LEFT JOIN abacus_query.region r ON pSol.regionid = r.regionid AND r.isdeleted = 0 AND r.IsActive=1\n",
+					"    WHERE o.isdeleted = 0 AND o.IsActive=1\n",
+					"),\n",
+					"SER_Rates AS (\n",
+					"    SELECT \n",
+					"        currencytypeid,\n",
+					"        startdate,\n",
+					"        enddate,\n",
+					"        rate,\n",
+					"        ROW_NUMBER() OVER (PARTITION BY currencytypeid ORDER BY updatetime DESC, createdDT DESC) AS ord\n",
+					"    FROM abacus_query.SER\n",
+					"    WHERE isdeleted = 0 AND IsActive=1\n",
+					")\n",
+					"\n",
+					"SELECT \n",
+					"    glje.journalid,\n",
+					"    glli.lineitemid,\n",
+					"    o.RegionCode,\n",
+					"    o.RegionName,\n",
+					"    glje.officeid AS OfficeID,\n",
+					"    o.OfficeName AS OfficeName,\n",
+					"    glje.journaldate AS JournalDate,\n",
+					"    YEAR(glje.journaldate) AS JournalDateYear,\n",
+					"    MONTH(glje.journaldate) AS JournalDateMonth,\n",
+					"    glje.referencenumber AS ReferenceNumber,\n",
+					"    CASE \n",
+					"        WHEN glje.isdynamics = 1 THEN glli.dynaccount \n",
+					"        WHEN dam.GLAccount IS NOT NULL THEN dam.DynAccount \n",
+					"        ELSE sa.GLAccount \n",
+					"    END AS GLAccount,\n",
+					"    CASE \n",
+					"        WHEN glje.isdynamics = 1 THEN COALESCE(ma.accountnumber, '') || COALESCE('-' || ma.name, '') \n",
+					"        WHEN dam.GLAccount IS NOT NULL THEN COALESCE(maSolDyn.accountnumber, '') || COALESCE('-' || maSolDyn.name, '') \n",
+					"        ELSE COALESCE(sa.GLAccount, '') || '-' || sa.Descr \n",
+					"    END AS GLAccountDescription,\n",
+					"    CASE \n",
+					"        WHEN glje.isdynamics = 1 THEN COALESCE(glli.DynProjectId, '') || COALESCE(' - ' || glli.dynactivity, '') \n",
+					"        WHEN pcm.dynprojectcode IS NOT NULL THEN COALESCE(pcm.dynprojectcode, '') || COALESCE(' - ' || pcm.dynactivity, '') \n",
+					"        ELSE COALESCE(spc.ProjectCode || '-', '') || 'Solomon Legacy - N/A' \n",
+					"    END AS ProjectCode,\n",
+					"    CASE \n",
+					"        WHEN glje.isdynamics = 1 THEN COALESCE(glli.DynProjectId, '') || COALESCE('-' || p.projectName, '') \n",
+					"        WHEN pSolDyn.ProjectID IS NOT NULL THEN COALESCE(pSolDyn.ProjectId, '') || COALESCE('-' || pSolDyn.projectName, '') \n",
+					"        ELSE COALESCE(spc.ProjectCode, '') || '-' || spc.project_desc \n",
+					"    END AS ProjectDesc,\n",
+					"    COALESCE(pin.pincode, '') AS PINCode,\n",
+					"    COALESCE(pin.employeeName, '') AS PINName,\n",
+					"    glli.debit AS Debit,\n",
+					"    glli.credit AS Credit,\n",
+					"    glli.debit - glli.credit AS CurrencyTotal,\n",
+					"    glje.currencyTypeID AS CurrencyId,\n",
+					"    ct.LongName AS CurrencyLongName,\n",
+					"    (glli.debit - glli.credit) / ser.rate AS USDAmount,\n",
+					"    ser.rate AS SER,\n",
+					"    COALESCE(glli.LOE, 0) AS LOE,\n",
+					"    glli.description AS Description\n",
+					"FROM abacus_query.GLJournalEntry glje\n",
+					"LEFT JOIN abacus_query.GLLineItem glli ON glje.journalid = glli.journalid AND glli.isdeleted = 0 AND glli.IsActive = 1\n",
+					"LEFT JOIN OfficeDetails o ON glli.officeid = o.officeid AND o.isdeleted = 0 AND o.IsActive = 1\n",
+					"LEFT JOIN abacus_query.Dyn_Project p ON glli.DynProjectId = p.ProjectID AND p.isdeleted = 0 AND p.IsActive=1 AND glje.isdynamics = 1\n",
+					"LEFT JOIN abacus_query.SolomonProjectCode spc ON spc.ProjectCode = glli.ProjectCode AND spc.isdeleted = 0 AND spc.IsActive=1 AND glje.isdynamics = 0\n",
+					"LEFT JOIN abacus_query.Dyn_ProjectCodeMappings pcm ON pcm.SLProjectCode = glli.ProjectCode AND glje.isdynamics = 0 AND pcm.isdeleted = 0 AND pcm.IsActive=1\n",
+					"LEFT JOIN abacus_query.Dyn_Project pSolDyn ON pcm.SLProjectCode IS NOT NULL AND pcm.DynProjectCode = pSolDyn.ProjectID AND pSolDyn.isdeleted = 0 AND pSolDyn.IsActive=1 AND glje.isdynamics = 0\n",
+					"LEFT JOIN abacus_query.Dyn_MainAccount ma ON ma.accountnumber = glli.dynaccount AND ma.isdeleted = 0 AND ma.IsActive=1 AND glje.isdynamics = 1\n",
+					"LEFT JOIN abacus_query.SolomonGLAccount sa ON sa.GLAccount = glli.GLAccount AND sa.isdeleted = 0 AND sa.IsActive=1 AND glje.isdynamics = 0\n",
+					"LEFT JOIN abacus_query.Dyn_GLAccountMappings dam ON dam.GLAccount = glli.GLAccount AND dam.isdeleted = 0 AND dam.IsActive=1 AND glje.isdynamics = 0\n",
+					"LEFT JOIN abacus_query.Dyn_MainAccount maSolDyn ON maSolDyn.accountnumber = dam.dynaccount AND maSolDyn.isdeleted = 0 AND maSolDyn.IsActive=1 AND glje.isdynamics = 0\n",
+					"LEFT JOIN abacus_query.CurrencyType ct ON ct.currencytypeid = glje.currencyTypeID AND ct.isdeleted = 0 AND ct.IsActive=1\n",
+					"LEFT JOIN SER_Rates ser ON ser.ord = 1 AND ser.currencytypeid = glje.currencyTypeID AND ser.enddate >= glje.journaldate AND ser.startdate <= glje.journaldate\n",
+					"LEFT JOIN abacus_query.PIN pin ON pin.pinid = glli.pinid AND pin.isdeleted = 0 AND pin.IsActive=1\n",
+					"WHERE glje.isdeleted = 0 AND glje.IsActive = 1 AND glli.lineitemid IS NOT NULL\n",
+					"\"\"\")\n",
+					""
+				],
+				"execution_count": 15
+			}
+		]
+	}
+}

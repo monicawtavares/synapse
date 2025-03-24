@@ -1,0 +1,152 @@
+{
+	"name": "FACTCustomerPO",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/fno"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "b216d0e4-d3c6-45ed-a47b-8c3c012c3cba"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\r\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": 5
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"source_container=(spark.table(\"frameworkdb.metadata_file_ingestion\").select(\"Source_Storage_Container_Name\").filter(\"Target_Table_Category='fo-query'\").first()[0]).replace(\"-\",\"_\")"
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.sql(f\"\"\"\r\n",
+					"CREATE OR REPLACE TABLE fo_sanctioneddb.FACTCustomerPO\r\n",
+					"USING DELTA\r\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/fo_sanctioneddb.Lakehouse/Tables/FACTCustomerPO'\r\n",
+					"AS\r\n",
+					"SELECT\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID || '|' || T1.PONUMBER || '|' || T2.PROJINVOICEPROJID || '|' || CAST(T3.RECID AS STRING) AS STRING) AS PKFACTCustomerPO,\r\n",
+					"    T1.PONUMBER AS CustomerPONumber,\r\n",
+					"    T1.INVOICEDAMOUNT AS CustomerPO_InvoicedAmount_,\r\n",
+					"    T1.POAMOUNT AS CustomerPO_POAmount_,\r\n",
+					"    T2.PROJINVOICEPROJID AS ProjectContractID,\r\n",
+					"    T1.RECID AS PMIPCUSTPOMATCHINGRECID,\r\n",
+					"    T1.REMAININGAMOUNT AS CustomerPO_RemainingAmount_,\r\n",
+					"    CAST(CAST(T2.PARTITION AS STRING) || '|' || T2.CURRENCYID AS STRING) AS FKSalesCurrency,\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID || '|' || T3.CUSTACCOUNT AS STRING) AS FKCustomer,\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID || '|' || T1.PONUMBER || '|' || T2.PROJINVOICEPROJID || '|' || CAST(T3.RECID AS STRING) AS STRING) AS FKCustomerPO,\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID AS STRING) AS FKDataArea,\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID || '|' || CAST(T3.RECID AS STRING) AS STRING) AS FKProjectFundingSource,\r\n",
+					"    CAST(CAST(T1.PARTITION AS STRING) || '|' || T1.DATAAREAID || '|' || CAST(T1.PROJINVOICETABLE AS STRING) AS STRING) AS FKProjectInvoice,\r\n",
+					"    CAST(CAST(T2.PARTITION AS STRING) || '|' || CAST(T2.PMIPPROJINVOICINGBILLINGAPPR AS STRING) AS STRING) AS FKProjectManager\r\n",
+					"FROM `{source_container}`.PMIPCUSTPOMATCHING T1\r\n",
+					"CROSS JOIN fo_query.PROJINVOICETABLE T2\r\n",
+					"LEFT OUTER JOIN fo_query.PROJFUNDINGSOURCE T3 ON (\r\n",
+					"    UPPER(T1.FUNDINGSOURCEID) = UPPER(T3.FUNDINGSOURCEID) -- Case-insensitive comparison\r\n",
+					"    AND UPPER(T1.DATAAREAID) = UPPER(T3.DATAAREAID) -- Case-insensitive comparison\r\n",
+					"    AND T1.PARTITION = T3.PARTITION -- Non-string, no UPPER needed\r\n",
+					")\r\n",
+					"WHERE\r\n",
+					"    UPPER(T1.PROJINVOICETABLE) = UPPER(T2.PROJINVOICEPROJID) -- Case-insensitive comparison\r\n",
+					"    AND UPPER(T1.DATAAREAID) = UPPER(T2.DATAAREAID) -- Case-insensitive comparison\r\n",
+					"    AND T1.PARTITION = T2.PARTITION -- Non-string, no UPPER needed\r\n",
+					"    AND T3.isActive = 1\r\n",
+					"    AND T2.isActive = 1;\r\n",
+					"\r\n",
+					"\"\"\")\r\n",
+					""
+				],
+				"execution_count": 7
+			}
+		]
+	}
+}

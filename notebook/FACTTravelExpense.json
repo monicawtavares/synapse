@@ -1,0 +1,155 @@
+{
+	"name": "FACTTravelExpense",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/fno"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "251b0b6b-5906-4f4c-a491-6ea09ab725a2"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\r\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.sql(f\"\"\"\r\n",
+					"CREATE OR REPLACE TABLE fo_sanctioneddb.FACTTravelExpense\r\n",
+					"USING DELTA\r\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/fo_sanctioneddb.Lakehouse/Tables/FACTTravelExpense'\r\n",
+					"AS\r\n",
+					"SELECT \r\n",
+					"    CAST(PKFACTTravelExpense AS STRING) AS PKFACTTravelExpense,\r\n",
+					"    CAST(FKActivity AS STRING) AS FKActivity,\r\n",
+					"    CAST(FKCurrency AS STRING) AS FKCurrency,\r\n",
+					"    CAST(FKCustomer AS STRING) AS FKCustomer,\r\n",
+					"    CAST(FKDataArea AS STRING) AS FKDataArea,\r\n",
+					"    CAST(FKFinancialDimension AS STRING) AS FKFinancialDimension,\r\n",
+					"    CAST(FKLineProperty AS STRING) AS FKLineProperty,\r\n",
+					"    CAST(FKProject AS STRING) AS FKProject,\r\n",
+					"    CAST(FKProjectController AS STRING) AS FKProjectController,\r\n",
+					"    CAST(FKProjectManager AS STRING) AS FKProjectManager,\r\n",
+					"    REPLACE(CAST(CAST(FKProjTransDate AS STRING) AS STRING), '-', '') AS FKProjTransDate,  \r\n",
+					"    CAST(FKSalesManager AS STRING) AS FKSalesManager,\r\n",
+					"    CAST(FKTravelExpense AS STRING) AS FKTravelExpense,\r\n",
+					"    CAST(FKUDFCode AS STRING) AS FKUDFCode,\r\n",
+					"    CAST(AccountingCurrencyReconciledAmount AS DOUBLE) AS AccountingCurrencyReconciledAmount_,  -- Using DOUBLE for float\r\n",
+					"    CAST(AdditionalInformation AS STRING) AS AdditionalInformation,\r\n",
+					"    CAST(AmountCURR AS DOUBLE) AS AmountCUR_,  -- Using DOUBLE for float\r\n",
+					"    CAST(AmountCURR_Unposted AS DECIMAL(18, 2)) AS AmountCUR_Unposted_,  -- Using DECIMAL(18, 2) for numeric\r\n",
+					"    CAST(AmountMST AS DOUBLE) AS AmountMST_,  -- Using DOUBLE for float\r\n",
+					"    CAST(AmountMST_Unposted AS DECIMAL(18, 2)) AS AmountMST_Unposted_,  -- Using DECIMAL(18, 2) for numeric\r\n",
+					"    CAST(CorrectedTaxAmount AS DOUBLE) AS CorrectedTaxAmount_,  -- Using DOUBLE for float\r\n",
+					"    CAST(CorrectedTaxAmountMST AS DOUBLE) AS CorrectedTaxAmountMST_,  -- Using DOUBLE for float\r\n",
+					"    CAST(CostType AS STRING) AS CostType,\r\n",
+					"    CAST(CurrencyCode AS STRING) AS CurrencyCode,\r\n",
+					"    CAST(Deduktion AS DOUBLE) AS Deduction,  -- Using DOUBLE for float\r\n",
+					"    CAST(DeduktionBreakfest AS BIGINT) AS DeductionBreakfast,  -- Using BIGINT for bigint\r\n",
+					"    CAST(DeduktionLunch AS BIGINT) AS DeductionLunch,  -- Using BIGINT for bigint\r\n",
+					"    CAST(LineNumber AS DOUBLE) AS LineNumber,  -- Using DOUBLE for float\r\n",
+					"    CAST(MerchantID AS STRING) AS MerchantID,\r\n",
+					"    CAST(Mileage AS DOUBLE) AS Mileage_,  -- Using DOUBLE for float\r\n",
+					"    CAST(MileageRate AS DOUBLE) AS MileageRate,  -- Using DOUBLE for float\r\n",
+					"    CAST(NetTransactionAmount AS DOUBLE) AS NetTransactionAmount_,  -- Using DOUBLE for float\r\n",
+					"    CAST(NetTransactionAmount_Unposted AS DECIMAL(18, 2)) AS NetTransactionAmount_Unposted_,  -- Using DECIMAL(18, 2) for numeric\r\n",
+					"    CAST(ProjectID AS STRING) AS ProjectID,\r\n",
+					"    CAST(Purpose AS STRING) AS Purpose,\r\n",
+					"    CAST(Voucher AS STRING) AS Voucher,\r\n",
+					"    CAST(CHHelpDeskLink AS STRING) AS CHHelpDeskLink,\r\n",
+					"    CAST(CHHelpText AS STRING) AS CHHelpText,\r\n",
+					"    CAST(CHChargedescription AS STRING) AS CHChargedDescription,\r\n",
+					"    CAST(CategoryGroup AS STRING) AS CategoryGroup,\r\n",
+					"    CAST(ExpenseCategory AS STRING) AS ExpenseCategory,\r\n",
+					"    CAST(ExpenseReportNumber AS STRING) AS ExpenseReportNumber,\r\n",
+					"    CAST(FKResource AS STRING) AS FKResource,\r\n",
+					"    CAST(Advance AS BIGINT) AS Advance,  -- Using BIGINT for bigint\r\n",
+					"    CAST(ApprovalStatus AS STRING) AS ApprovalStatus,\r\n",
+					"    CAST(CHDailyRoomRate AS DOUBLE) AS CHDailyRoomRate,  -- Using DOUBLE for float\r\n",
+					"    CAST(CHDailyRoomRateCurrencyCode AS STRING) AS CHDailyRoomRateCurrencyCode,\r\n",
+					"    CAST(TotalTaxAmount AS DOUBLE) AS TotalTaxAmount_  -- Using DOUBLE for float\r\n",
+					"FROM fo_sanctioneddb.CH_FACTTRAVELEXPENSE\r\n",
+					"\"\"\")\r\n",
+					""
+				],
+				"execution_count": 4
+			}
+		]
+	}
+}

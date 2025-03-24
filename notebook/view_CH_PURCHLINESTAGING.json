@@ -1,0 +1,324 @@
+{
+	"name": "view_CH_PURCHLINESTAGING",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/fno"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "7230784b-5284-4780-9190-6c1151268953"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\r\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.sql(f\"\"\"\r\n",
+					"CREATE OR REPLACE TABLE fo_sanctioneddb.CH_PURCHLINESTAGING\r\n",
+					"USING DELTA\r\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/fo_sanctioneddb.Lakehouse/Tables/CH_PURCHLINESTAGING'\r\n",
+					"AS\r\n",
+					"SELECT \r\n",
+					"    coalesce(T1.TAXITEMGROUP, '') AS TAXITEMGROUP,\r\n",
+					"    coalesce(T1.TAXGROUP, '') AS TAXGROUP,\r\n",
+					"    T1.ACCOUNTINGDISTRIBUTIONTEMPLATE AS ACCOUNTINGDISTRIBUTIONTEMPLATE,\r\n",
+					"    coalesce(T1.ACTIVITYNUMBER, '') AS ACTIVITYNUMBER,\r\n",
+					"    T1.ADDRESSREFRECID AS ADDRESSREFRECID,\r\n",
+					"    T1.ADDRESSREFTABLEID AS ADDRESSREFTABLEID,\r\n",
+					"    T1.AGREEMENTSKIPAUTOLINK AS AGREEMENTSKIPAUTOLINK,\r\n",
+					"    coalesce(T1.ASSETBOOKID, '') AS ASSETBOOKID,\r\n",
+					"    coalesce(T1.ASSETGROUP, '') AS ASSETGROUP,\r\n",
+					"    coalesce(T1.ASSETID, '') AS ASSETID,\r\n",
+					"    T1.ASSETTRANSTYPEPURCH AS ASSETTRANSTYPEPURCH,\r\n",
+					"    coalesce(T1.BARCODE, '') AS BARCODE,\r\n",
+					"    coalesce(T1.BARCODETYPE, '') AS BARCODETYPE,\r\n",
+					"    T1.BLOCKED AS BLOCKED,\r\n",
+					"    T1.CFOPTABLE_BR AS CFOPTABLE_BR,\r\n",
+					"    T1.COMPLETE AS COMPLETE,\r\n",
+					"    T1.CONFIRMEDDLV AS CONFIRMEDDLV,\r\n",
+					"    T1.CONFIRMEDTAXAMOUNT AS CONFIRMEDTAXAMOUNT,\r\n",
+					"    coalesce(T1.CONFIRMEDTAXWRITECODE, '') AS CONFIRMEDTAXWRITECODE,\r\n",
+					"    coalesce(T1.COUNTYORIGDEST, '') AS COUNTYORIGDEST,\r\n",
+					"    --,T1.COVREF AS COVREF\r\n",
+					"    T1.CREATEFIXEDASSET AS CREATEFIXEDASSET,\r\n",
+					"    T1.CURRENCYCODE AS CURRENCYCODE,\r\n",
+					"    coalesce(T1.CUSTOMERREF, '') AS CUSTOMERREF,\r\n",
+					"    coalesce(T1.CUSTPURCHASEORDERFORMNUM, '') AS CUSTPURCHASEORDERFORMNUM,\r\n",
+					"    T1.DELIVERYDATE AS DELIVERYDATE,\r\n",
+					"    T1.DELIVERYNAME AS DELIVERYNAME,\r\n",
+					"    T1.DELIVERYPOSTALADDRESS AS DELIVERYPOSTALADDRESS,\r\n",
+					"    T1.DELIVERYTYPE AS DELIVERYTYPE,\r\n",
+					"    T1.DEPRECIATIONSTARTDATE AS DEPRECIATIONSTARTDATE,\r\n",
+					"    T1.DISCAMOUNT AS DISCAMOUNT,\r\n",
+					"    T1.DISCPERCENT AS DISCPERCENT,\r\n",
+					"    T1.EDITABLEINWORKFLOW AS EDITABLEINWORKFLOW,\r\n",
+					"    coalesce(T1.EXTERNALITEMID, '') AS EXTERNALITEMID,\r\n",
+					"    T1.GSTHSTTAXTYPE_CA AS GSTHSTTAXTYPE_CA,\r\n",
+					"    coalesce(T1.INTERCOMPANYINVENTTRANSID, '') AS INTERCOMPANYINVENTTRANSID,\r\n",
+					"    T1.INTERCOMPANYORIGIN AS INTERCOMPANYORIGIN,\r\n",
+					"    T1.INTRASTATFULFILLMENTDATE_HU AS INTRASTATFULFILLMENTDATE_HU,\r\n",
+					"    T1.INVENTDIMID AS INVENTDIMID,\r\n",
+					"    T1.INVENTINVOICENOW AS INVENTINVOICENOW,\r\n",
+					"    T1.INVENTRECEIVEDNOW AS INVENTRECEIVEDNOW,\r\n",
+					"    coalesce(T1.INVENTREFID, '') AS INVENTREFID,\r\n",
+					"    coalesce(T1.INVENTREFTRANSID, '') AS INVENTREFTRANSID,\r\n",
+					"    T1.INVENTTRANSID AS INVENTTRANSID,\r\n",
+					"    T1.ISDELETED AS ISDELETED,\r\n",
+					"    T1.ISFINALIZED AS ISFINALIZED,\r\n",
+					"    T1.ISINVOICEMATCHED AS ISINVOICEMATCHED,\r\n",
+					"    T1.ISMODIFIED AS ISMODIFIED,\r\n",
+					"    T1.ISPWP AS ISPWP,\r\n",
+					"    coalesce(T1.ITEMBOMID, '') AS ITEMBOMID,\r\n",
+					"    coalesce(T1.ITEMID, '') AS ITEMID,\r\n",
+					"    T1.ITEMREFTYPE AS ITEMREFTYPE,\r\n",
+					"    coalesce(T1.ITEMROUTEID, '') AS ITEMROUTEID,\r\n",
+					"    T1.LINEAMOUNT AS LINEAMOUNT,\r\n",
+					"    T1.LINEDELIVERYTYPE AS LINEDELIVERYTYPE,\r\n",
+					"    T1.LINEDISC AS LINEDISC,\r\n",
+					"    coalesce(T1.LINEHEADER, '') AS LINEHEADER,\r\n",
+					"    T1.LINENUMBER AS LINENUMBER,\r\n",
+					"    T1.LINEPERCENT AS LINEPERCENT,\r\n",
+					"    T1.MANUALENTRYCHANGEPOLICY AS MANUALENTRYCHANGEPOLICY,\r\n",
+					"    T1.MANUALMODIFIEDFIELD AS MANUALMODIFIEDFIELD,\r\n",
+					"    T1.MATCHINGAGREEMENTLINE AS MATCHINGAGREEMENTLINE,\r\n",
+					"    T1.MATCHINGPOLICY AS MATCHINGPOLICY,\r\n",
+					"    coalesce(T1.MCRDROPSHIPCOMMENT, '') AS MCRDROPSHIPCOMMENT,\r\n",
+					"    T1.MCRDROPSHIPMENT AS MCRDROPSHIPMENT,\r\n",
+					"    T1.MCRDROPSHIPSTATUS AS MCRDROPSHIPSTATUS,\r\n",
+					"    T1.MCRORDERLINE2PRICEHISTORYREF AS MCRORDERLINE2PRICEHISTORYREF,\r\n",
+					"    T1.MULTILNDISC AS MULTILNDISC,\r\n",
+					"    T1.MULTILNPERCENT AS MULTILNPERCENT,\r\n",
+					"    T1.NAME AS NAME,\r\n",
+					"    T1.OPERATIONTYPE_MX AS OPERATIONTYPE_MX,\r\n",
+					"    T1.OVERDELIVERYPCT AS OVERDELIVERYPCT,\r\n",
+					"    coalesce(T1.PDSCALCULATIONID, '') AS PDSCALCULATIONID,\r\n",
+					"    T1.PDSCWINVENTRECEIVEDNOW AS PDSCWINVENTRECEIVEDNOW,\r\n",
+					"    T1.PDSCWQTY AS PDSCWQTY,\r\n",
+					"    T1.PDSCWREMAININVENTFINANCIAL AS PDSCWREMAININVENTFINANCIAL,\r\n",
+					"    T1.PDSCWREMAININVENTPHYSICAL AS PDSCWREMAININVENTPHYSICAL,\r\n",
+					"    T1.PLANREFERENCE AS PLANREFERENCE,\r\n",
+					"    coalesce(T1.PORT, '') AS PORT,\r\n",
+					"    T1.PRICEUNIT AS PRICEUNIT,\r\n",
+					"    T1.PROCUREMENTCATEGORY AS PROCUREMENTCATEGORY,\r\n",
+					"    T1.PROJCATEGORYID AS PROJCATEGORYID,\r\n",
+					"    T1.PROJID AS PROJID,\r\n",
+					"    T1.PROJLINEPROPERTYID AS PROJLINEPROPERTYID,\r\n",
+					"    T1.PROJSALESCURRENCYID AS PROJSALESCURRENCYID,\r\n",
+					"    T1.PROJSALESPRICE AS PROJSALESPRICE,\r\n",
+					"    T1.PROJSALESUNITID AS PROJSALESUNITID,\r\n",
+					"    coalesce(T1.PROJTAXGROUPID, '') AS PROJTAXGROUPID,\r\n",
+					"    coalesce(T1.PROJTAXITEMGROUPID, '') AS PROJTAXITEMGROUPID,\r\n",
+					"    T1.PROJTRANSID AS PROJTRANSID,\r\n",
+					"    T1.PROJWORKER AS PROJWORKER,\r\n",
+					"    coalesce(T1.PSARETAINSCHEDULEID, '') AS PSARETAINSCHEDULEID,\r\n",
+					"    T1.PSATOTALRETAINAMOUNT AS PSATOTALRETAINAMOUNT,\r\n",
+					"    T1.PURCHASETYPE AS PURCHASETYPE,\r\n",
+					"    T1.PURCHCOMMITMENTLINE_PSN AS PURCHCOMMITMENTLINE_PSN,\r\n",
+					"    T1.PURCHID AS PURCHID,\r\n",
+					"    T1.PURCHMARKUP AS PURCHMARKUP,\r\n",
+					"    T1.PURCHPRICE AS PURCHPRICE,\r\n",
+					"    T1.PURCHQTY AS PURCHQTY,\r\n",
+					"    T1.PURCHRECEIVEDNOW AS PURCHRECEIVEDNOW,\r\n",
+					"    coalesce(T1.PURCHREQID, '') AS PURCHREQID,\r\n",
+					"    T1.PURCHREQLINEREFID AS PURCHREQLINEREFID,\r\n",
+					"    T1.PURCHSTATUS AS PURCHSTATUS,\r\n",
+					"    T1.PURCHUNIT AS PURCHUNIT,\r\n",
+					"    T1.QTYORDERED AS QTYORDERED,\r\n",
+					"    T1.RBOPACKAGELINENUM AS RBOPACKAGELINENUM,\r\n",
+					"    T1.REMAINDER AS REMAINDER,\r\n",
+					"    T1.REMAININVENTFINANCIAL AS REMAININVENTFINANCIAL,\r\n",
+					"    T1.REMAININVENTPHYSICAL AS REMAININVENTPHYSICAL,\r\n",
+					"    T1.REMAINPURCHFINANCIAL AS REMAINPURCHFINANCIAL,\r\n",
+					"    T1.REMAINPURCHPHYSICAL AS REMAINPURCHPHYSICAL,\r\n",
+					"    coalesce(T1.REQATTENTION, '') AS REQATTENTION,\r\n",
+					"    coalesce(T1.REQPLANIDSCHED, '') AS REQPLANIDSCHED,\r\n",
+					"    coalesce(T1.REQPOID, '') AS REQPOID,\r\n",
+					"    T1.REQUESTER AS REQUESTER,\r\n",
+					"    T1.RETAILLINENUMEX1 AS RETAILLINENUMEX1,\r\n",
+					"    coalesce(T1.RETAILPACKAGEID, '') AS RETAILPACKAGEID,\r\n",
+					"    T1.RETAILTEMPVALUEEX2 AS RETAILTEMPVALUEEX2,\r\n",
+					"    coalesce(T1.RETURNACTIONID, '') AS RETURNACTIONID,\r\n",
+					"    coalesce(T1.RETURNDISPOSITIONCODEID, '') AS RETURNDISPOSITIONCODEID,\r\n",
+					"    T1.RETURNSTATUS AS RETURNSTATUS,\r\n",
+					"    T1.SCRAP AS SCRAP,\r\n",
+					"    coalesce(T1.SERVICEADDRESS, '') AS SERVICEADDRESS,\r\n",
+					"    T1.SERVICEDATE AS SERVICEDATE,\r\n",
+					"    T1.SHIPPINGDATECONFIRMED AS SHIPPINGDATECONFIRMED,\r\n",
+					"    T1.SHIPPINGDATEREQUESTED AS SHIPPINGDATEREQUESTED,\r\n",
+					"    T1.SKIPDISTRIBUTIONUPDATE AS SKIPDISTRIBUTIONUPDATE,\r\n",
+					"    T1.SOURCEDOCUMENTLINE AS SOURCEDOCUMENTLINE,\r\n",
+					"    T1.STATISTICVALUE_LT AS STATISTICVALUE_LT,\r\n",
+					"    coalesce(T1.STATPROCID, '') AS STATPROCID,\r\n",
+					"    T1.STATTRIANGULARDEAL AS STATTRIANGULARDEAL,\r\n",
+					"    T1.STOCKEDPRODUCT AS STOCKEDPRODUCT,\r\n",
+					"    T1.SYSTEMENTRYCHANGEPOLICY AS SYSTEMENTRYCHANGEPOLICY,\r\n",
+					"    T1.SYSTEMENTRYSOURCE AS SYSTEMENTRYSOURCE,\r\n",
+					"    coalesce(T1.TAMITEMVENDREBATEGROUPID, '') AS TAMITEMVENDREBATEGROUPID,\r\n",
+					"    T1.TAX1099AMOUNT AS TAX1099AMOUNT,\r\n",
+					"    T1.TAX1099FIELDS AS TAX1099FIELDS,\r\n",
+					"    T1.TAX1099RECID AS TAX1099RECID,\r\n",
+					"    coalesce(T1.TAX1099STATE, '') AS TAX1099STATE,\r\n",
+					"    T1.TAX1099STATEAMOUNT AS TAX1099STATEAMOUNT,\r\n",
+					"    T1.TAXAUTOGENERATED AS TAXAUTOGENERATED,\r\n",
+					"    coalesce(T1.TAXSERVICECODE_BR, '') AS TAXSERVICECODE_BR,\r\n",
+					"    coalesce(T1.TAXWITHHOLDBASECUR_TH, '') AS TAXWITHHOLDBASECUR_TH,\r\n",
+					"    coalesce(T1.TAXWITHHOLDGROUP_TH, '') AS TAXWITHHOLDGROUP_TH,\r\n",
+					"    T1.TAXWITHHOLDITEMGROUPHEADING_TH AS TAXWITHHOLDITEMGROUPHEADING_TH,\r\n",
+					"    coalesce(T1.TRANSACTIONCODE, '') AS TRANSACTIONCODE,\r\n",
+					"    coalesce(T1.TRANSPORT, '') AS TRANSPORT,\r\n",
+					"    T1.UNDERDELIVERYPCT AS UNDERDELIVERYPCT,\r\n",
+					"    coalesce(T1.VARIANTID, '') AS VARIANTID,\r\n",
+					"    T1.VENDACCOUNT AS VENDACCOUNT,\r\n",
+					"    T1.VENDGROUP AS VENDGROUP,\r\n",
+					"    T1.WFDELIVERYDUESTATE AS WFDELIVERYDUESTATE,\r\n",
+					"    T1.WFINVRECEIVEDSTATE AS WFINVRECEIVEDSTATE,\r\n",
+					"    T1.WORKFLOWSTATE AS WORKFLOWSTATE,\r\n",
+					"    T1.CREDITEDVENDINVOICETRANS AS CREDITEDVENDINVOICETRANS,\r\n",
+					"    T1.INTRASTATCOMMODITY AS INTRASTATCOMMODITY,\r\n",
+					"    coalesce(T1.ORIGCOUNTRYREGIONID, '') AS ORIGCOUNTRYREGIONID,\r\n",
+					"    coalesce(T1.ORIGSTATEID, '') AS ORIGSTATEID,\r\n",
+					"    T1.PURCHASEORDERLINECREATIONMETHOD AS PURCHASEORDERLINECREATIONMETHOD,\r\n",
+					"    T1.CHAUTHORIZEDGEOGRAPHICCODESSETUP AS CHAUTHORIZEDGEOGRAPHICCODESSETUP,\r\n",
+					"    T1.CHEMPLOYEERECEIVINGBENEFIT AS CHEMPLOYEERECEIVINGBENEFIT,\r\n",
+					"    coalesce(T1.CHMACTIVITYNUMBER, '') AS CHMACTIVITYNUMBER,\r\n",
+					"    coalesce(T1.CHMPROJECTID, '') AS CHMPROJECTID,\r\n",
+					"    coalesce(T1.CHMPROJECTLEGALENTITY, '') AS CHMPROJECTLEGALENTITY,\r\n",
+					"    T1.CHSOURCEFUNDINGSETUP AS CHSOURCEFUNDINGSETUP,\r\n",
+					"    coalesce(T1.CHUDFCODE, '') AS CHUDFCODE,\r\n",
+					"    T1.PARTITION AS CHPARTITION,\r\n",
+					"    T1.RECID AS CHRECID,\r\n",
+					"    T1.RECVERSION AS CHRECVERSION,\r\n",
+					"    T1.CREATEDDATETIME AS CHCREATEDDATETIME,\r\n",
+					"    T1.MODIFIEDDATETIME AS CHMODIFIEDDATETIME,\r\n",
+					"    T1.DATAAREAID AS CHDATAAREAID,\r\n",
+					"    T1.LINEAMOUNT AS CONTRACTVALUE,\r\n",
+					"    T1.MODIFIEDDATETIME AS MODIFIEDDATETIME,\r\n",
+					"    T1.CREATEDDATETIME AS CREATEDDATETIME,\r\n",
+					"    T1.RECVERSION AS RECVERSION,\r\n",
+					"    T1.DATAAREAID AS DATAAREAID,\r\n",
+					"    T1.PARTITION AS PARTITION,\r\n",
+					"    T1.RECID AS RECID,\r\n",
+					"    CAST(T1.DefaultDimension AS BIGINT) AS DEFAULTDIMENSION,\r\n",
+					"    CAST(T1.LedgerDimension AS BIGINT) AS LEDGERDIMENSION,\r\n",
+					"    CAST(CONCAT(CAST(T1.PARTITION AS STRING), '|', coalesce(T1.DATAAREAID, ''), '|', coalesce(T1.PROJID, '')) AS STRING) AS FKPROJECT,\r\n",
+					"    CAST(CONCAT(CAST(T1.PARTITION AS STRING), '|', T1.DATAAREAID, '|', coalesce(T1.ACTIVITYNUMBER, '')) AS STRING) AS FKACTIVITY,\r\n",
+					"    CAST(CONCAT(CAST(T1.PARTITION AS STRING), '|', T1.DATAAREAID, '|', coalesce(T1.VENDACCOUNT, '')) AS STRING) AS FKVENDOR,\r\n",
+					"    CAST(T1.RECID AS BIGINT) AS PKRECID,\r\n",
+					"    CAST(CONCAT(T1.DATAAREAID, '|', T1.PURCHID) AS STRING) AS FKVENDORPO,\r\n",
+					"    CAST(NULL AS BIGINT) AS BUDGETRESERVATIONLINE_PSN\r\n",
+					"FROM fo_query.PurchLine T1\r\n",
+					"WHERE T1.isActive = 1\r\n",
+					"\"\"\")\r\n",
+					""
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					""
+				],
+				"execution_count": null
+			}
+		]
+	}
+}

@@ -1,0 +1,133 @@
+{
+	"name": "view_CH_CLIN",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/fno"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "9058290b-c3ec-44aa-8cee-1e5124a66738"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\r\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"spark.sql(f\"\"\"\n",
+					"CREATE OR REPLACE TABLE fo_sanctioneddb.CH_CLIN\n",
+					"USING DELTA\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/fo_sanctioneddb.Lakehouse/Tables/CH_CLIN'\n",
+					"AS\n",
+					"SELECT \n",
+					"    T1.PROJID,\n",
+					"    T1.ACTIVITYNUMBER,\n",
+					"    T1.PROJCATEGORYID,\n",
+					"    T1.CLIN,\n",
+					"    T1.DATAAREAID AS CHDATAAREAID,\n",
+					"    T1.CHMAINACCOUNT AS MAINACCOUNT,\n",
+					"    T1.RECVERSION,\n",
+					"    T1.DATAAREAID,\n",
+					"    T1.PARTITION,\n",
+					"    T1.RECID,\n",
+					"    T2.CLINID,\n",
+					"    T2.GCCLIN AS CLINDESCRIPTION,\n",
+					"    T2.RECVERSION AS RECVERSION_2,\n",
+					"    T2.DATAAREAID_ AS DATAAREAID_2,\n",
+					"    T2.PARTITION AS PARTITION_2,\n",
+					"    T2.RECID AS RECID_2,\n",
+					"    CAST(concat(CAST(T1.PARTITION AS STRING), '|', T1.DATAAREAID, '|', T1.PROJID, '|', T1.ACTIVITYNUMBER, '|', coalesce(T1.PROJCATEGORYID, '')) AS STRING) AS PKCLIN\n",
+					"FROM \n",
+					"    fo_sanctioneddb.CHGCPROJPROJECTCATEGORYCLINVw T1\n",
+					"LEFT OUTER JOIN \n",
+					"    fo_sanctioneddb.CHCLINCODEVw T2 \n",
+					"ON \n",
+					"    UPPER(T1.CLIN) = UPPER(T2.GCCLIN) AND\n",
+					"    UPPER(T1.DATAAREAID) = UPPER(T2.DATAAREAID_) AND\n",
+					"    UPPER(T1.PARTITION) = UPPER(T2.PARTITION) AND\n",
+					"    UPPER(T1.PROJID) = UPPER(T2.PROJID);\n",
+					"\n",
+					"\"\"\")\n",
+					""
+				],
+				"execution_count": 5
+			}
+		]
+	}
+}

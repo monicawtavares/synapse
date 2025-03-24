@@ -1,0 +1,220 @@
+{
+	"name": "Hydration_Dim_Opportunity",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DDL/CRM"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "758a68cb-2161-4215-8023-cdaf4a55f248"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"fabric_workspace = get_fabric_workspace()"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"source_container=(spark.table(\"frameworkdb.metadata_file_ingestion\").select(\"Source_Storage_Container_Name\").filter(\"Target_Table_Category='crm-query'\").first()[0]).replace(\"-\",\"_\")"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.sql(f\"\"\"CREATE OR REPLACE TABLE crm_sanctioneddb.dim_opportunity\n",
+					"USING DELTA\n",
+					"LOCATION 'abfss://{fabric_workspace}@onelake.dfs.fabric.microsoft.com/crm_sanctioneddb.Lakehouse/Tables/dim_opportunity'\n",
+					"AS\n",
+					"SELECT\n",
+					"    COALESCE(source.Opportunity_id_nk, '0') AS Opportunity_id_nk,\n",
+					"    COALESCE(source.Opportunity_desc_nk, 'MISSING') AS Opportunity_desc_nk,\n",
+					"    COALESCE(source.Primary_Practice, 'MISSING') AS Primary_Practice,\n",
+					"    COALESCE(source.Business_Unit_Id_nk, 'MISSING') AS Business_Unit_Id_nk,\n",
+					"    COALESCE(source.Debrief_Id_nk, 'MISSING') AS Debrief_Id_nk,\n",
+					"    COALESCE(source.IQC_framework_id_nk, 'MISSING') AS IQC_framework_id_nk,\n",
+					"    COALESCE(source.Primary_Location_Country_Key, 'MISSING') AS Primary_Location_Country_Key,\n",
+					"    COALESCE(source.Account_Id_nk, 'MISSING') AS Account_Id_nk,\n",
+					"    COALESCE(source.Solicitation_type_id_nk, 0) AS Solicitation_type_id_nk,\n",
+					"    COALESCE(source.Proposal_Due_Date, CAST('1900-01-01' AS DATE)) AS Proposal_Due_Date,\n",
+					"    COALESCE(source.Estimated_value, 0.0) AS Estimated_value,\n",
+					"    COALESCE(source.Stage, 'MISSING') AS Stage,\n",
+					"    COALESCE(source.IQC_Award_Type, 'MISSING') AS IQC_Award_Type,\n",
+					"    COALESCE(source.IQC_Ceiling, 0.0) AS IQC_Ceiling,\n",
+					"    COALESCE(CAST(source.Pending_Win AS INT), 0) AS Pending_Win,\n",
+					"    COALESCE(source.Role, 'MISSING') AS Role,\n",
+					"    COALESCE(source.Comp_Range_Due_Date, CAST('1900-01-01' AS DATE)) AS Comp_Range_Due_Date,\n",
+					"    COALESCE(source.Probability_of_Bidding, 'MISSING') AS Probability_of_Bidding,\n",
+					"    COALESCE(source.Award_Date, CAST('1900-01-01' AS DATE)) AS Award_Date,\n",
+					"    COALESCE(source.Organization_Full_Name, 'MISSING') AS Organization_Full_Name,\n",
+					"    COALESCE(source.Contract_Type, 'MISSING') AS Contract_Type,\n",
+					"    COALESCE(source.Solicitation_Type, 'MISSING') AS Solicitation_Type,\n",
+					"    COALESCE(source.Solicitation_Short_Name, 'MISSING') AS Solicitation_Short_Name,\n",
+					"    COALESCE(source.Solicitation_Full_Name, 'MISSING') AS Solicitation_Full_Name,\n",
+					"    COALESCE(source.Anticipated_Sol_Type, 'MISSING') AS Anticipated_Sol_Type,\n",
+					"    COALESCE(source.Solicitation_Release_Date, CAST('1900-01-01' AS DATE)) AS Solicitation_Release_Date,\n",
+					"    COALESCE(source.CRM_URL, 'MISSING') AS CRM_URL,\n",
+					"    COALESCE(source.Audit_Hash_Cd, hash('MISSING')) AS Audit_Hash_Cd,\n",
+					"    COALESCE(source.IsActive, 1) AS IsActive,\n",
+					"    COALESCE(source.effective_start_date, CAST('2020-01-01' AS DATE)) AS effective_start_date,\n",
+					"    COALESCE(source.effective_end_date, CAST('9999-12-31' AS DATE)) AS effective_end_date,\n",
+					"    current_date() AS Date_Created,\n",
+					"    current_date() AS Date_Updated_Last,\n",
+					"    current_user() AS Created_By,\n",
+					"    current_user() AS Updated_By\n",
+					"FROM (\n",
+					"    SELECT DISTINCT\n",
+					"        O.opportunityid AS Opportunity_id_nk,\n",
+					"        '' AS Opportunity_desc_nk,\n",
+					"        O.new_technocalsectorsname AS Primary_Practice,\n",
+					"        O.new_chemonicsrbuentity AS Business_Unit_Id_nk,\n",
+					"        O.new_debrief AS Debrief_Id_nk,\n",
+					"        O.new_parentiqc AS IQC_framework_id_nk,\n",
+					"        O.new_primarycountry AS Primary_Location_Country_Key,\n",
+					"        O.chem_missionorganizationissuingcontract AS Account_Id_nk,\n",
+					"        O.new_anticipatedsoltype AS Solicitation_type_id_nk,\n",
+					"        O.new_proposalduedate AS Proposal_Due_Date,\n",
+					"        COALESCE(O.estimatedvalue_base, 0.0) AS Estimated_value,\n",
+					"        OM_new_stage.LocalizedLabel AS Stage,\n",
+					"        O.chem_iqcawardtype AS IQC_Award_Type,\n",
+					"        COALESCE(O.new_iqcceilingcurrency_base, 0.0) AS IQC_Ceiling,\n",
+					"        O.chem_pendingwin AS Pending_Win,\n",
+					"        O.new_role1 AS Role,\n",
+					"        O.new_comprangeduedate AS Comp_Range_Due_Date,\n",
+					"        OM_new_determinecertaintyofsoliciationrelease1.LocalizedLabel AS Probability_of_Bidding,\n",
+					"        O.finaldecisiondate AS Award_Date,\n",
+					"        A.name AS Organization_Full_Name,\n",
+					"        GOM_new_contracttype.LocalizedLabel AS Contract_Type,\n",
+					"        OM_new_solicitationtype.LocalizedLabel AS Solicitation_Type,\n",
+					"        O.new_solicitationlongname AS Solicitation_Short_Name,\n",
+					"        O.name AS Solicitation_Full_Name,\n",
+					"        O.new_anticipatedsoltype AS Anticipated_Sol_Type,\n",
+					"        O.new_releasedate AS Solicitation_Release_Date,\n",
+					"        CONCAT('https://chemonics.crm.dynamics.com/main.aspx?appid=6a416dab-0787-e811-a95c-000d3a3af855&pagetype=entityrecord&etn=opportunity&id=', O.opportunityid) AS CRM_URL,\n",
+					"        HASH(\n",
+					"            O.opportunityid, O.new_technocalsectorsname, O.new_chemonicsrbuentity, O.new_debrief, O.new_parentiqc, O.new_primarycountry, O.chem_missionorganizationissuingcontract, O.new_anticipatedsoltype, O.new_proposalduedate, O.estimatedvalue_base,\n",
+					"            OM_new_stage.LocalizedLabel,\n",
+					"            O.chem_iqcawardtype, O.new_iqcceilingcurrency_base, O.chem_pendingwin, O.new_role1, O.new_comprangeduedate,\n",
+					"            OM_new_determinecertaintyofsoliciationrelease1.LocalizedLabel,\n",
+					"            O.finaldecisiondate, A.name,\n",
+					"            GOM_new_contracttype.LocalizedLabel,\n",
+					"            OM_new_solicitationtype.LocalizedLabel,\n",
+					"            O.new_solicitationlongname, O.name, O.new_anticipatedsoltype, O.new_releasedate\n",
+					"        ) AS Audit_Hash_Cd,\n",
+					"        O.IsActive,\n",
+					"        CAST('2020-01-01' AS DATE) AS effective_start_date,\n",
+					"        CAST('9999-12-31' AS DATE) AS effective_end_date,\n",
+					"        current_date() AS Date_Created,\n",
+					"        current_date() AS Date_Updated_Last,\n",
+					"        current_user() AS Created_By,\n",
+					"        current_user() AS Updated_By\n",
+					"    FROM crm_query.opportunity O\n",
+					"    LEFT JOIN crm_query.account A ON A.accountid = O.new_prime\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM {source_container}.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_stage'\n",
+					"    ) OM_new_stage ON O.new_stage = OM_new_stage.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM {source_container}.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_determinecertaintyofsoliciationrelease1'\n",
+					"    ) OM_new_determinecertaintyofsoliciationrelease1 ON O.new_determinecertaintyofsoliciationrelease1 = OM_new_determinecertaintyofsoliciationrelease1.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM {source_container}.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_solicitationtype'\n",
+					"    ) OM_new_solicitationtype ON O.new_solicitationtype = OM_new_solicitationtype.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM {source_container}.GlobalOptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_contracttype'\n",
+					"    ) GOM_new_contracttype ON O.new_contracttype = GOM_new_contracttype.Option\n",
+					"    WHERE O.IsActive = 1 AND A.IsActive = 1\n",
+					") AS source;\n",
+					"\"\"\")\n",
+					""
+				],
+				"execution_count": 4
+			}
+		]
+	}
+}
