@@ -1,0 +1,177 @@
+{
+	"name": "neuacc-odp-csv-to-delta",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/logging"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "faef76d3-6941-4be3-9a25-78b997fb3747"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"###### This notebooks uses relative paths to read and write from the lakehouse. As such, please ensure that the notebook is attached to the lakehouse that contains the csv metadata files."
+				]
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"import pandas as pd\n",
+					"import os\n",
+					"from pyspark.sql.functions import *\n",
+					"spark.sql(\"CREATE DATABASE IF NOT EXISTS frameworkdb\")"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from notebookutils import mssparkutils\r\n",
+					"\r\n",
+					"secret_value = mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountKey\", \"AzureKeyVault\")\r\n",
+					"adls_account_name=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountName\", \"AzureKeyVault\")\r\n",
+					"\r\n",
+					"spark.conf.set(f\"spark.hadoop.fs.azure.account.key.chem{get_current_env()}eussa.dfs.core.windows.net\", secret_value)"
+				],
+				"execution_count": 5
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\r\n",
+					"csv_files_list=[\"metadata/file_ingestion.csv\",\"metadata/table_definition.csv\"]\r\n",
+					""
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Define the folder containing the CSV files\n",
+					"\n",
+					"# Get a list of all CSV files in the folder\n",
+					"# Process each CSV file\n",
+					"path = f\"abfss://framework@{adls_account_name}.dfs.core.windows.net\"\n",
+					"base_delta_path = f\"abfss://framework@{adls_account_name}.dfs.core.windows.net/metadata/Tables\"\n",
+					"\n",
+					"try:\n",
+					"    for file in csv_files_list:\n",
+					"        # Read the CSV file into a DataFrame\n",
+					"        df = spark.read.format(\"csv\").option(\"header\", \"true\").load(f'{path}/{file}')\n",
+					"        \n",
+					"        # Remove invalid characters from column names\n",
+					"        for col_name in df.columns:\n",
+					"            new_col_name = col_name.replace(' ', '_').replace(',', '').replace(';', '').replace('{', '').replace('}', '').replace('(', '').replace(')', '').replace('\\n', '').replace('\\t', '').replace('=', '')\n",
+					"            df = df.withColumnRenamed(col_name, new_col_name)\n",
+					"\n",
+					"        # Define the Delta path for each file\n",
+					"        delta_path = f\"{base_delta_path}/metadata_{file.replace('.csv', '')}\"\n",
+					"        \n",
+					"        # Write the DataFrame in Delta format\n",
+					"        df.write.format(\"delta\").option('overwriteSchema', 'true').mode(\"overwrite\").save(delta_path)\n",
+					"        \n",
+					"        # Upgrade the Delta table properties\n",
+					"        spark.sql(f\"\"\"\n",
+					"            ALTER TABLE delta.`{delta_path}`\n",
+					"            SET TBLPROPERTIES (\n",
+					"               'delta.columnMapping.mode' = 'name',\n",
+					"               'delta.minReaderVersion' = '2',\n",
+					"               'delta.minWriterVersion' = '5')\n",
+					"        \"\"\")\n",
+					"        \n",
+					"        table_name = f\"frameworkdb.{file.replace('.csv', '').replace('/', '_')}\"\n",
+					"        spark.sql(f\"DROP TABLE IF EXISTS {table_name}\")\n",
+					"        spark.sql(f\"CREATE table if not exists {table_name} USING DELTA LOCATION '{delta_path}'\")\n",
+					"\n",
+					"except Exception as e:\n",
+					"    print(\"An error occurred: \", str(e))\n",
+					""
+				],
+				"execution_count": 7
+			}
+		]
+	}
+}

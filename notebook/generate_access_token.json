@@ -1,0 +1,154 @@
+{
+	"name": "generate_access_token",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/sources"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "a231ba75-48b2-49e8-8335-3ed9f20e8898"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"import requests\r\n",
+					"import json\r\n",
+					"import datetime\r\n",
+					""
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\r\n",
+					"# Service Principal Credentials (Using Key Vault)\r\n",
+					"# Getting information for Tenant ID, Client ID (Service Principal) and Client Password\r\n",
+					"tenant_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPTenantID',\"AzureKeyVault\")\r\n",
+					"client_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPAppId','AzureKeyVault')\r\n",
+					"client_secret=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"FabricSPClientSecret\", \"AzureKeyVault\")"
+				],
+				"execution_count": null
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"\r\n",
+					"def get_access_token(tenant_id, client_id, client_secret):\r\n",
+					"    \"\"\"\r\n",
+					"    Authenticate to Azure AD and retrieve an access token for Power BI REST API.\r\n",
+					"    \"\"\"\r\n",
+					"    try:\r\n",
+					"        token_endpoint = f\"https://login.microsoftonline.com/{tenant_id}/oauth2/token\"\r\n",
+					"        resource_endpoint = \"https://analysis.windows.net/powerbi/api\"\r\n",
+					"        \r\n",
+					"        token_payload = {\r\n",
+					"            \"grant_type\": \"client_credentials\",\r\n",
+					"            \"client_id\": client_id,\r\n",
+					"            \"client_secret\": client_secret,\r\n",
+					"            \"resource\": resource_endpoint\r\n",
+					"        }\r\n",
+					"\r\n",
+					"        response = requests.post(token_endpoint, data=token_payload)\r\n",
+					"        \r\n",
+					"        if response.status_code == 200:\r\n",
+					"            token_data = response.json()\r\n",
+					"            token = token_data.get(\"access_token\")\r\n",
+					"            expires_on = token_data.get(\"expires_on\")\r\n",
+					"            token_expiration = datetime.datetime.utcfromtimestamp(int(expires_on)) if expires_on else None\r\n",
+					"            \r\n",
+					"            print(\"Access token generated successfully.\")\r\n",
+					"            return token, token_expiration\r\n",
+					"        else:\r\n",
+					"            raise requests.HTTPError(f\"Token generation failed: {response.text}\")\r\n",
+					"    except Exception as e:\r\n",
+					"        print(f\"Error generating access token: {e}\")\r\n",
+					"        raise\r\n",
+					"\r\n",
+					"\r\n",
+					"try:\r\n",
+					"    # Generate the access token\r\n",
+					"    print(\"Authenticating to Azure...\")\r\n",
+					"    access_token, token_expiration = get_access_token(tenant_id, client_id, client_secret)\r\n",
+					"    \r\n",
+					"    # Return the token and expiration to the pipeline\r\n",
+					"    result = {\r\n",
+					"        \"access_token\": f\"Bearer {access_token}\",\r\n",
+					"        \"token_expiration\": token_expiration.isoformat() if token_expiration else None\r\n",
+					"    }\r\n",
+					"    print(\"Returning the access token to the pipeline...\")\r\n",
+					"    mssparkutils.notebook.exit(json.dumps(result))\r\n",
+					"except Exception as e:\r\n",
+					"    print(f\"An error occurred: {e}\")\r\n",
+					"    mssparkutils.notebook.exit(json.dumps({\"error\": str(e)}))\r\n",
+					""
+				],
+				"execution_count": 3
+			}
+		]
+	}
+}

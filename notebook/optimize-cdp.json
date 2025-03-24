@@ -1,0 +1,292 @@
+{
+	"name": "optimize-cdp",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/logging"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "6d2c8af4-7f91-4b15-ba39-b30ab496f973"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"import concurrent.futures\n",
+					"spark.conf.set(\"spark.sql.parquet.int96RebaseModeInWrite\", \"CORRECTED\")\n",
+					"\n",
+					""
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"metadata_lakehouse = 'frameworkdb'"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"def optimize_cdf_logs_tables(table_name):\n",
+					"    \"\"\"\n",
+					"    Optimize tables in the cdf_logs schema without applying VACUUM.\n",
+					"\n",
+					"    Parameters:\n",
+					"    -----------\n",
+					"    table_name : str\n",
+					"        The name of the table in the cdf_logs schema to optimize.\n",
+					"\n",
+					"    Returns:\n",
+					"    --------\n",
+					"    None\n",
+					"\n",
+					"    Prints:\n",
+					"    -------\n",
+					"    Success or failure message for the specified table.\n",
+					"    \"\"\"\n",
+					"    try:\n",
+					"        spark.conf.set(\"spark.databricks.delta.optimize.zorder.checkStatsCollection.enabled\", \"False\")\n",
+					"        spark.sql(f\"\"\"OPTIMIZE cdf_logs.{table_name}\"\"\")\n",
+					"        print(f\"TABLE cdf_logs.{table_name} OPTIMIZED SUCCESSFULLY (NO VACUUM)\")\n",
+					"    except Exception as e:\n",
+					"        print(f\"TABLE cdf_logs.{table_name} ------> Failed to Optimize: {str(e)}\")\n",
+					"\n",
+					"\n",
+					"cdf_logs_tables = spark.sql(\"SHOW TABLES IN cdf_logs\").collect()\n",
+					"cdf_logs_table_names = [row.tableName for row in cdf_logs_tables]\n",
+					"\n",
+					"executor_cdf = concurrent.futures.ThreadPoolExecutor(max_workers=len(cdf_logs_table_names))\n",
+					"cdf_logs_optimization_process = [\n",
+					"    executor_cdf.submit(optimize_cdf_logs_tables, table_name)\n",
+					"    for table_name in cdf_logs_table_names\n",
+					"]\n",
+					"cdf_logs_future = [f.result() for f in cdf_logs_optimization_process]"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"def optmize_tables(df):\n",
+					"    \"\"\"\n",
+					"    Optimize and vacuum Delta tables based on the metadata provided.\n",
+					"\n",
+					"    This function performs the following steps:\n",
+					"    1. Retrieves the table row information from the metadata lakehouse.\n",
+					"    2. Extracts table name, category, and primary key column information.\n",
+					"    3. Optimizes the Delta table using ZORDER if a primary key column is specified.\n",
+					"    4. Runs a dry run of the VACUUM command to identify files that can be deleted.\n",
+					"    5. Executes the VACUUM command to clean up stale data files, retaining data for a specified number of hours.\n",
+					"    \n",
+					"    Parameters:\n",
+					"    ----------\n",
+					"    df : DataFrame\n",
+					"        A Spark DataFrame containing the metadata with at least the columns:\n",
+					"        - 'Target_Table_Name': The name of the target table.\n",
+					"        - 'Target_Table_Category': The category of the target table.\n",
+					"\n",
+					"    Configuration:\n",
+					"    --------------\n",
+					"    The function sets the following Spark configuration:\n",
+					"    - `spark.databricks.delta.optimize.zorder.checkStatsCollection.enabled`: Disabled for optimization.\n",
+					"\n",
+					"    Exceptions:\n",
+					"    -----------\n",
+					"    Catches any exceptions that occur during the process, logs the failure, and prints the step at which the failure occurred.\n",
+					"\n",
+					"    Returns:\n",
+					"    --------\n",
+					"    None\n",
+					"    \n",
+					"    Prints:\n",
+					"    -------\n",
+					"    Success message with the table category and name upon successful optimization and vacuuming.\n",
+					"    Failure message with the table category, name, and the step where the failure occurred if an exception is raised.\n",
+					"\n",
+					"    Example:\n",
+					"    --------\n",
+					"    optimize_tables(df)\n",
+					"\n",
+					"    Notes:\n",
+					"    ------\n",
+					"    - The `metadata_lakehouse` variable is assumed to be defined in the environment where this function is called.\n",
+					"    - The function currently uses a fixed retention period of 7 days for the VACUUM command.\n",
+					"    \"\"\"\n",
+					"    \n",
+					"    try:\n",
+					"        step = \"Get Table Row\"\n",
+					"        name = df[\"Target_Table_Name\"]\n",
+					"        category = df[\"Target_Table_Category\"]\n",
+					"        curr = spark.sql(f\"\"\"SELECT * FROM {metadata_lakehouse}.metadata_file_ingestion WHERE Target_Table_Name = '{name}' and Target_Table_Category = '{category}' \"\"\")\n",
+					"    \n",
+					"        step = \"Get Table Info\"\n",
+					"        table_name = curr.first()[\"Target_Table_Name\"]\n",
+					"        table_category = (curr.first()[\"Target_Table_Category\"]).replace(\"-\",\"_\")\n",
+					"        z_order_columns = curr.first()[\"Primary_Key\"]\n",
+					"\n",
+					"        spark.conf.set(\"spark.databricks.delta.optimize.zorder.checkStatsCollection.enabled\", \"False\")\n",
+					"        step = \"Optimize Delta Tables\"\n",
+					"        if z_order_columns is not None:\n",
+					"            spark.sql(f\"\"\"OPTIMIZE {table_category}.{table_name} ZORDER BY ({z_order_columns})\"\"\")\n",
+					"        else:\n",
+					"            spark.sql(f\"\"\"OPTIMIZE {table_category}.{table_name}\"\"\")\n",
+					" \n",
+					"\n",
+					"        step = \"Vacuum Delta Tables\"\n",
+					"        #if vacuum_retention is not None:\n",
+					"        retention_period_hours = int(7) * 24\n",
+					"        \n",
+					"        step = 'Execute Vacuum Dry Run'\n",
+					"        spark.sql( f\"\"\"VACUUM {table_category}.{table_name} RETAIN {retention_period_hours} HOURS DRY RUN\"\"\" )\n",
+					"\n",
+					"        step = 'Execute Vacuum'\n",
+					"        spark.sql(f\"\"\"VACUUM {table_category}.{table_name} RETAIN {retention_period_hours} HOURS\"\"\")\n",
+					"        print(f\"TABLE SUCCEEDED   :   {table_category}.{table_name}\")\n",
+					"    except Exception as e:\n",
+					"        print(f\"TABLE FAILED : {table_category}.{table_name} ------> Failed at Step: {str(e)}\")"
+				],
+				"execution_count": 5
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": true
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"optimization_metadata = spark.sql(f\"SELECT * FROM {metadata_lakehouse}.metadata_file_ingestion\").collect()\n",
+					"\n",
+					"optimization_metadata"
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(optimization_metadata))\n",
+					"optimization_table_process = [executor.submit(optmize_tables,table) for table in optimization_metadata]\n",
+					"future = [future.result() for future in optimization_table_process]"
+				],
+				"execution_count": 7
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"OPTIMIZE frameworkdb.errorlogging "
+				],
+				"execution_count": null
+			}
+		]
+	}
+}

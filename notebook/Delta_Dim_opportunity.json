@@ -1,0 +1,229 @@
+{
+	"name": "Delta_Dim_opportunity",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DML"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "9849d0ae-6297-42b2-9e04-a1cb3ab8e031"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"MERGE INTO crm_sanctioneddb.dim_opportunity AS target\n",
+					"USING (\n",
+					"    SELECT DISTINCT\n",
+					"        O.opportunityid AS Opportunity_id_nk,\n",
+					"        '' AS Opportunity_desc_nk,\n",
+					"        O.new_technocalsectorsname AS Primary_Practice,\n",
+					"        O.new_chemonicsrbuentity AS Business_Unit_Id_nk,\n",
+					"        O.new_debrief AS Debrief_Id_nk,\n",
+					"        O.new_parentiqc AS IQC_framework_id_nk,\n",
+					"        O.new_primarycountry AS Primary_Location_Country_Key,\n",
+					"        O.chem_missionorganizationissuingcontract AS Account_Id_nk,\n",
+					"        O.new_anticipatedsoltype AS Solicitation_type_id_nk,\n",
+					"        O.new_proposalduedate AS Proposal_Due_Date,\n",
+					"        COALESCE(O.estimatedvalue_base, 0.0) AS Estimated_value,\n",
+					"        OM_new_stage.LocalizedLabel AS Stage,\n",
+					"        COALESCE(O.new_iqcceilingcurrency_base, 0.0) AS IQC_Ceiling,\n",
+					"        O.chem_iqcawardtype AS IQC_Award_Type,\n",
+					"        CAST(O.chem_pendingwin AS INT) AS Pending_Win,\n",
+					"        O.new_role1 AS Role,\n",
+					"        O.new_comprangeduedate AS Comp_Range_Due_Date,\n",
+					"        OM_new_determinecertaintyofsoliciationrelease1.LocalizedLabel AS Probability_of_Bidding,\n",
+					"        O.finaldecisiondate AS Award_Date,\n",
+					"        A.name AS Organization_Full_Name,\n",
+					"        GOM_new_contracttype.LocalizedLabel AS Contract_Type,\n",
+					"        OM_new_solicitationtype.LocalizedLabel AS Solicitation_Type,\n",
+					"        O.new_solicitationlongname AS Solicitation_Short_Name,\n",
+					"        O.name AS Solicitation_Full_Name,\n",
+					"        O.new_anticipatedsoltype AS Anticipated_Sol_Type,\n",
+					"        O.new_releasedate AS Solicitation_Release_Date,\n",
+					"        'https://chemonics.crm.dynamics.com/main.aspx?appid=6a416dab-0787-e811-a95c-000d3a3af855&pagetype=entityrecord&etn=opportunity&id=' || O.opportunityid AS CRM_URL,\n",
+					"        HASH(\n",
+					"            O.opportunityid, O.new_technocalsectorsname, O.new_chemonicsrbuentity, O.new_debrief, O.new_parentiqc, O.new_primarycountry, O.chem_missionorganizationissuingcontract, O.new_anticipatedsoltype, O.new_proposalduedate, O.estimatedvalue_base,\n",
+					"            OM_new_stage.LocalizedLabel,\n",
+					"            O.new_iqcceilingcurrency_base, O.chem_iqcawardtype, O.chem_pendingwin, O.new_role1, O.new_comprangeduedate,\n",
+					"            OM_new_determinecertaintyofsoliciationrelease1.LocalizedLabel,\n",
+					"            O.finaldecisiondate, A.name,\n",
+					"            GOM_new_contracttype.LocalizedLabel,\n",
+					"            OM_new_solicitationtype.LocalizedLabel,\n",
+					"            O.new_solicitationlongname, O.name, O.new_anticipatedsoltype, O.new_releasedate\n",
+					"        ) AS Audit_Hash_Cd,\n",
+					"        O.IsActive,\n",
+					"        CAST('2020-01-01' AS DATE) AS effective_start_date,\n",
+					"        CAST('9999-12-31' AS DATE) AS effective_end_date,\n",
+					"        current_date() AS Date_Created,\n",
+					"        current_date() AS Date_Updated_Last,\n",
+					"        current_user() AS Created_By,\n",
+					"        current_user() AS Updated_By\n",
+					"    FROM crm_query.opportunity AS O\n",
+					"    LEFT JOIN crm_query.account AS A ON A.accountid = O.new_prime AND A.IsActive = 1\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM dataverse_chemonicscrm_chemonics.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_stage'\n",
+					"    ) AS OM_new_stage ON O.new_stage = OM_new_stage.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM dataverse_chemonicscrm_chemonics.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_determinecertaintyofsoliciationrelease1'\n",
+					"    ) AS OM_new_determinecertaintyofsoliciationrelease1 ON O.new_determinecertaintyofsoliciationrelease1 = OM_new_determinecertaintyofsoliciationrelease1.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM dataverse_chemonicscrm_chemonics.OptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_solicitationtype'\n",
+					"    ) AS OM_new_solicitationtype ON O.new_solicitationtype = OM_new_solicitationtype.Option\n",
+					"    LEFT JOIN (\n",
+					"        SELECT Option, LocalizedLabel\n",
+					"        FROM dataverse_chemonicscrm_chemonics.GlobalOptionsetMetadata\n",
+					"        WHERE EntityName = 'opportunity' AND OptionSetName = 'new_contracttype'\n",
+					"    ) AS GOM_new_contracttype ON O.new_contracttype = GOM_new_contracttype.Option\n",
+					"    WHERE O.IsActive = 1 AND O.opportunityid IS NOT NULL\n",
+					") AS source\n",
+					"ON target.Opportunity_id_nk = source.Opportunity_id_nk and target.isActive=1\n",
+					"WHEN MATCHED THEN\n",
+					"    UPDATE SET \n",
+					"        target.effective_end_date = current_date(),\n",
+					"        target.IsActive = 0\n",
+					"WHEN NOT MATCHED BY TARGET THEN\n",
+					"    INSERT (\n",
+					"        Opportunity_id_nk,\n",
+					"        Opportunity_desc_nk,\n",
+					"        Primary_Practice,\n",
+					"        Business_Unit_Id_nk,\n",
+					"        Debrief_Id_nk,\n",
+					"        IQC_framework_id_nk,\n",
+					"        Primary_Location_Country_Key,\n",
+					"        Account_Id_nk,\n",
+					"        Solicitation_type_id_nk,\n",
+					"        Proposal_Due_Date,\n",
+					"        Estimated_value,\n",
+					"        Stage,\n",
+					"        IQC_Ceiling,\n",
+					"        IQC_Award_Type,\n",
+					"        Pending_Win,\n",
+					"        Role,\n",
+					"        Comp_Range_Due_Date,\n",
+					"        Probability_of_Bidding,\n",
+					"        Award_Date,\n",
+					"        Organization_Full_Name,\n",
+					"        Contract_Type,\n",
+					"        Solicitation_Type,\n",
+					"        Solicitation_Short_Name,\n",
+					"        Solicitation_Full_Name,\n",
+					"        Anticipated_Sol_Type,\n",
+					"        Solicitation_Release_Date,\n",
+					"        CRM_URL,\n",
+					"        Audit_Hash_Cd,\n",
+					"        IsActive,\n",
+					"        effective_start_date,\n",
+					"        effective_end_date,\n",
+					"        Date_Created,\n",
+					"        Date_Updated_Last,\n",
+					"        Created_By,\n",
+					"        Updated_By\n",
+					"    ) VALUES (\n",
+					"        source.Opportunity_id_nk,\n",
+					"        source.Opportunity_desc_nk,\n",
+					"        source.Primary_Practice,\n",
+					"        source.Business_Unit_Id_nk,\n",
+					"        source.Debrief_Id_nk,\n",
+					"        source.IQC_framework_id_nk,\n",
+					"        source.Primary_Location_Country_Key,\n",
+					"        source.Account_Id_nk,\n",
+					"        source.Solicitation_type_id_nk,\n",
+					"        source.Proposal_Due_Date,\n",
+					"        source.Estimated_value,\n",
+					"        source.Stage,\n",
+					"        source.IQC_Ceiling,\n",
+					"        source.IQC_Award_Type,\n",
+					"        source.Pending_Win,\n",
+					"        source.Role,\n",
+					"        source.Comp_Range_Due_Date,\n",
+					"        source.Probability_of_Bidding,\n",
+					"        source.Award_Date,\n",
+					"        source.Organization_Full_Name,\n",
+					"        source.Contract_Type,\n",
+					"        source.Solicitation_Type,\n",
+					"        source.Solicitation_Short_Name,\n",
+					"        source.Solicitation_Full_Name,\n",
+					"        source.Anticipated_Sol_Type,\n",
+					"        source.Solicitation_Release_Date,\n",
+					"        source.CRM_URL,\n",
+					"        source.Audit_Hash_Cd,\n",
+					"        source.IsActive,\n",
+					"        source.effective_start_date,\n",
+					"        source.effective_end_date,\n",
+					"        source.Date_Created,\n",
+					"        source.Date_Updated_Last,\n",
+					"        source.Created_By,\n",
+					"        source.Updated_By\n",
+					"    );\n",
+					""
+				],
+				"execution_count": 18
+			}
+		]
+	}
+}

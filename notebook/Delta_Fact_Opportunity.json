@@ -1,0 +1,145 @@
+{
+	"name": "Delta_Fact_Opportunity",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DML"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "3bbb2b5c-2303-420a-92c2-bd57a318c3d9"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql \n",
+					"\n",
+					"MERGE INTO crm_sanctioneddb.fact_opportunity AS target\n",
+					"USING (\n",
+					"    SELECT DISTINCT\n",
+					"        O.Opportunity_id_nk,\n",
+					"        O.Business_Unit_Id_nk,\n",
+					"        P.Practice_id_nk,\n",
+					"        O.Primary_Practice AS Primary_Practice_Short_Name,\n",
+					"        O.Solicitation_Short_Name,\n",
+					"        cal.CalendarDate,\n",
+					"        O.Stage,\n",
+					"        geo.Geography_id_nk,\n",
+					"        COALESCE(O.Estimated_Value, 0.0) AS Estimated_Value,\n",
+					"        COALESCE(O.IQC_Ceiling, 0.0) AS IQC_Ceiling,\n",
+					"        O.Award_Date,\n",
+					"        O.IsActive, -- This ensures all incoming records are marked active\n",
+					"        current_date() AS Effective_start_date,\n",
+					"        '9999-12-31' AS Effective_end_date,\n",
+					"        current_date() AS Date_Created,\n",
+					"        current_date() AS Date_Updated_Last,\n",
+					"        current_user() AS Created_By,\n",
+					"        current_user() AS Updated_By\n",
+					"    FROM crm_sanctioneddb.dim_opportunity O\n",
+					"    LEFT JOIN crm_sanctioneddb.dim_businessunit BU ON BU.Business_Unit_Id_nk = O.Business_Unit_Id_nk AND BU.IsActive = 1\n",
+					"    LEFT JOIN crm_sanctioneddb.dim_new_practice P ON P.practice = O.primary_practice AND P.IsActive = 1\n",
+					"    LEFT JOIN crm_sanctioneddb.dim_calendar cal ON cal.CalendarDate = CAST(O.Effective_Start_Date AS DATE)\n",
+					"    LEFT JOIN crm_sanctioneddb.dim_geography geo ON geo.Geography_id_nk = O.Primary_Location_Country_Key AND geo.IsActive = 1\n",
+					"    WHERE O.IsActive = 1\n",
+					") AS source\n",
+					"ON target.Opportunity_id_nk = source.Opportunity_id_nk\n",
+					"WHEN MATCHED AND target.IsActive = 1 THEN -- Only update active records\n",
+					"    UPDATE SET\n",
+					"        IsActive = 0,\n",
+					"        Effective_end_date = current_date()\n",
+					"WHEN NOT MATCHED THEN\n",
+					"    INSERT (\n",
+					"        Opportunity_id_nk,\n",
+					"        Business_Unit_Id_nk,\n",
+					"        Practice_id_nk,\n",
+					"        Primary_Practice_Short_Name,\n",
+					"        Solicitation_Short_Name,\n",
+					"        CalendarDate,\n",
+					"        Stage,\n",
+					"        Geography_id_nk,\n",
+					"        Estimated_Value,\n",
+					"        IQC_Ceiling,\n",
+					"        Award_Date,\n",
+					"        IsActive,\n",
+					"        Effective_start_date,\n",
+					"        Effective_end_date,\n",
+					"        Date_Created,\n",
+					"        Date_Updated_Last,\n",
+					"        Created_By,\n",
+					"        Updated_By\n",
+					"    )\n",
+					"    VALUES (\n",
+					"        source.Opportunity_id_nk,\n",
+					"        source.Business_Unit_Id_nk,\n",
+					"        source.Practice_id_nk,\n",
+					"        source.Primary_Practice_Short_Name,\n",
+					"        source.Solicitation_Short_Name,\n",
+					"        source.CalendarDate,\n",
+					"        source.Stage,\n",
+					"        source.Geography_id_nk,\n",
+					"        source.Estimated_Value,\n",
+					"        source.IQC_Ceiling,\n",
+					"        source.Award_Date,\n",
+					"        source.IsActive,\n",
+					"        source.Effective_start_date,\n",
+					"        source.Effective_end_date,\n",
+					"        source.Date_Created,\n",
+					"        source.Date_Updated_Last,\n",
+					"        source.Created_By,\n",
+					"        source.Updated_By\n",
+					"    );\n",
+					""
+				],
+				"execution_count": 5
+			}
+		]
+	}
+}

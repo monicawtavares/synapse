@@ -1,0 +1,120 @@
+{
+	"name": "Delta_Dim_new_debrief",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/DML"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "16e7a40c-5146-469d-9877-8cb1483257e5"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "python"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"false\")\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"false\")"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"microsoft": {
+						"language": "sparksql"
+					},
+					"collapsed": false
+				},
+				"source": [
+					"%%sql\n",
+					"\n",
+					"MERGE INTO crm_sanctioneddb.dim_new_debrief AS target\n",
+					"USING (\n",
+					"    SELECT \n",
+					"        D.new_debriefid AS Debrief_Id_nk,\n",
+					"        COALESCE(D.new_valueoftheaward_base, 0.0) AS Winning_Value,\n",
+					"        A.name AS Winner_Full_Name,\n",
+					"        D.IsActive,\n",
+					"        hash(D.new_debriefid, COALESCE(D.new_valueoftheaward_base, 0.0), COALESCE(A.name, '~')) AS Audit_Hash_Cd\n",
+					"    FROM crm_query.new_debrief D\n",
+					"    LEFT JOIN crm_query.account A ON A.accountid = D.new_winner AND A.IsActive = 1\n",
+					"    WHERE D.IsActive = 1\n",
+					") AS source\n",
+					"ON (target.Debrief_Id_nk = source.Debrief_Id_nk AND target.IsActive = 1)\n",
+					"WHEN MATCHED AND target.Audit_Hash_Cd <> source.Audit_Hash_Cd THEN\n",
+					"    UPDATE SET \n",
+					"        Effective_End_Date = current_date(),\n",
+					"        IsActive = 0,\n",
+					"        Winning_Value = source.Winning_Value,\n",
+					"        Winner_Full_Name = source.Winner_Full_Name,\n",
+					"        Date_Updated_Last = current_date(),\n",
+					"        Updated_By = current_user()\n",
+					"WHEN NOT MATCHED THEN\n",
+					"    INSERT (\n",
+					"        Debrief_id_nk,\n",
+					"        Debrief_desc_nk,\n",
+					"        Winning_Value,\n",
+					"        Winner_Full_Name,\n",
+					"        Audit_Hash_Cd,\n",
+					"        IsActive,\n",
+					"        effective_start_date,\n",
+					"        effective_end_date,\n",
+					"        Date_Created,\n",
+					"        Date_Updated_Last,\n",
+					"        Created_By,\n",
+					"        Updated_By\n",
+					"    )\n",
+					"    VALUES (\n",
+					"        source.Debrief_Id_nk,\n",
+					"        '',\n",
+					"        source.Winning_Value,\n",
+					"        source.Winner_Full_Name,\n",
+					"        source.Audit_Hash_Cd,\n",
+					"        1,\n",
+					"        current_date(),\n",
+					"        '9999-12-31',\n",
+					"        current_date(),\n",
+					"        current_date(),\n",
+					"        current_user(),\n",
+					"        current_user()\n",
+					"    )"
+				],
+				"execution_count": 2
+			}
+		]
+	}
+}

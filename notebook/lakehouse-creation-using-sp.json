@@ -1,0 +1,297 @@
+{
+	"name": "lakehouse-creation-using-sp",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/sources"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "811d4d44-e3dc-4d7d-91b2-de6f4f6b34d8"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"import json\r\n",
+					"import requests\r\n",
+					"import datetime\r\n",
+					"from datetime import datetime, timedelta\r\n",
+					"from time import sleep\r\n",
+					"from notebookutils import mssparkutils"
+				],
+				"execution_count": 25
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 26
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language": "python"
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"%%pyspark\r\n",
+					"# Parameter cell\r\n",
+					"destination_lakehouse = \"\" #crm_sanctioneddb\r\n",
+					""
+				],
+				"execution_count": 27
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\r\n",
+					"# Getting information for Tenant ID, Client ID (Service Principal) and Client Password\r\n",
+					"tenant_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPTenantID',\"AzureKeyVault\")\r\n",
+					"client_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPAppId','AzureKeyVault')\r\n",
+					"client_secret=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"FabricSPClientSecret\", \"AzureKeyVault\")"
+				],
+				"execution_count": 28
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"#############################################\r\n",
+					"\r\n",
+					"\"\"\"\r\n",
+					"This module handles the generation of access tokens using client credentials and manages the retrieval of data from\r\n",
+					"Microsoft Fabric environments. It provides a function to obtain a valid access token for calling the Fabric REST APIs.\r\n",
+					"\"\"\"\r\n",
+					"\r\n",
+					"# Parameters\r\n",
+					"dest_workspacename = get_fabric_workspace()  # Replace with your workspace name\r\n",
+					"\r\n",
+					"fabric_base_url = 'https://api.fabric.microsoft.com/v1/'\r\n",
+					"\r\n",
+					"\r\n",
+					"# REST API response codes\r\n",
+					"http_ok_code = 200\r\n",
+					"http_accepted_code = 202\r\n",
+					"http_created_code = 201\r\n",
+					"\r\n",
+					"access_token = None\r\n",
+					"token_expiration = None\r\n",
+					"\r\n",
+					"# Token Generation Function\r\n",
+					"def token_generation(client_id, client_secret, tenant_id):\r\n",
+					"    \"\"\"\r\n",
+					"    Generates an OAuth2 access token for authenticating against the Fabric REST API using the provided \r\n",
+					"    service principal credentials (client ID and client secret).\r\n",
+					"\r\n",
+					"    Parameters\r\n",
+					"    ----------\r\n",
+					"    client_id : str\r\n",
+					"        The client ID (Application ID) of the Azure AD registered application.\r\n",
+					"    client_secret : str\r\n",
+					"        The client secret associated with the Azure AD application.\r\n",
+					"    tenant_id : str\r\n",
+					"        The tenant ID (Directory ID) for the Azure AD tenant where the application is registered.\r\n",
+					"\r\n",
+					"    Returns\r\n",
+					"    -------\r\n",
+					"    tuple\r\n",
+					"        A tuple containing:\r\n",
+					"        - access_token (str): The bearer token prefixed with 'Bearer ' that can be used in HTTP headers for calls to the Fabric API.\r\n",
+					"        - token_expiration (datetime): The UTC datetime at which the token will expire.\r\n",
+					"\r\n",
+					"    Raises\r\n",
+					"    ------\r\n",
+					"    requests.HTTPError\r\n",
+					"        If the token generation request fails (non-200 HTTP response), this exception is raised with the response text.\r\n",
+					"    \"\"\"\r\n",
+					"    token_endpoint = f'https://login.microsoftonline.com/{tenant_id}/oauth2/token'\r\n",
+					"    resource_endpoint = 'https://analysis.windows.net/powerbi/api'\r\n",
+					"    token_payload = {\r\n",
+					"        'grant_type': 'client_credentials',\r\n",
+					"        'client_id': client_id,\r\n",
+					"        'client_secret': client_secret,\r\n",
+					"        'resource': resource_endpoint\r\n",
+					"    }\r\n",
+					"    response = requests.post(token_endpoint, data=token_payload)\r\n",
+					"    if response.status_code == 200:\r\n",
+					"        token_data = response.json()\r\n",
+					"        token = token_data.get('access_token')\r\n",
+					"        access_token = f'Bearer {token}'\r\n",
+					"        expires_on = token_data.get('expires_on')\r\n",
+					"        if expires_on is not None:\r\n",
+					"            token_expiration =  datetime.datetime.utcfromtimestamp(int(expires_on))\r\n",
+					"        else:\r\n",
+					"            token_expiration = None\r\n",
+					"    else:\r\n",
+					"        raise requests.HTTPError(f\"Token generation failed: {response.text}\")\r\n",
+					"    return access_token, token_expiration\r\n",
+					"\r\n",
+					"# Generate Access Token\r\n",
+					"if access_token is None or token_expiration is None or token_expiration < datetime.utcnow():\r\n",
+					"    access_token, token_expiration = token_generation(client_id, client_secret, tenant_id)\r\n",
+					"    # print(access_token)\r\n",
+					"\r\n",
+					""
+				],
+				"execution_count": 30
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Get Workspace ID\r\n",
+					"# This section retrieves the unique ID of a specified workspace from Microsoft Fabric.\r\n",
+					"# It uses the previously generated access token and the workspace name provided as parameters.\r\n",
+					"url = fabric_base_url + \"workspaces\"\r\n",
+					"headers = {'Authorization': access_token}\r\n",
+					"response = requests.get(url, headers=headers)\r\n",
+					"if response.status_code == http_ok_code:\r\n",
+					"    workspaces = response.json()[\"value\"]\r\n",
+					"    dest_workspaceid = None\r\n",
+					"    for workspace in workspaces:\r\n",
+					"        if workspace['displayName'] == dest_workspacename:\r\n",
+					"            dest_workspaceid = workspace['id']\r\n",
+					"            break\r\n",
+					"    if dest_workspaceid is None:\r\n",
+					"        raise Exception(f\"Workspace '{dest_workspacename}' not found.\")\r\n",
+					"else:\r\n",
+					"    raise Exception(f\"Failed to retrieve workspaces: {response.text}\")\r\n",
+					"\r\n",
+					"# Lakehouse Creation\r\n",
+					"# This section checks if a given lakehouse already exists in the retrieved workspace.\r\n",
+					"# If it does not exist, it creates a new lakehouse.\r\n",
+					"url_lakehouse = fabric_base_url + f\"workspaces/{dest_workspaceid}/lakehouses\"\r\n",
+					"headers = {\r\n",
+					"    'Authorization': access_token,\r\n",
+					"    'Content-Type': 'application/json'\r\n",
+					"}\r\n",
+					"\r\n",
+					"# Check if Lakehouse Already Exists\r\n",
+					"# Retrieve a list of lakehouses in the target workspace and see if the desired lakehouse is already present.\r\n",
+					"response = requests.get(url_lakehouse, headers=headers)\r\n",
+					"if response.status_code == http_ok_code:\r\n",
+					"    lakehouses = response.json()[\"value\"]\r\n",
+					"    dest_lakehouseid = None\r\n",
+					"    for lakehouse in lakehouses:\r\n",
+					"        if lakehouse['displayName'] == destination_lakehouse:\r\n",
+					"            dest_lakehouseid = lakehouse['id']\r\n",
+					"            print(f\"Lakehouse '{destination_lakehouse}' already exists with ID: {dest_lakehouseid}\")\r\n",
+					"            break\r\n",
+					"    if dest_lakehouseid is None:\r\n",
+					"        # Create Lakehouse\r\n",
+					"        payload = json.dumps({\"displayName\": destination_lakehouse})\r\n",
+					"        response = requests.post(url_lakehouse, headers=headers, data=payload)\r\n",
+					"        if response.status_code in [http_ok_code, http_accepted_code, http_created_code]:\r\n",
+					"            dest_lakehouseid = response.json()[\"id\"]\r\n",
+					"            print(f\"Lakehouse '{destination_lakehouse}' created with ID: {dest_lakehouseid}\")\r\n",
+					"        else:\r\n",
+					"            raise requests.HTTPError(f\"Failed to create lakehouse: {response.text}\")\r\n",
+					"else:\r\n",
+					"    raise Exception(f\"Failed to retrieve lakehouses: {response.text}\")\r\n",
+					"\r\n",
+					"# Retrieve SQL Endpoint Details\r\n",
+					"# -----------------------------\r\n",
+					"# After the lakehouse is created or confirmed to exist, it may take some time for its associated SQL endpoint\r\n",
+					"# to be fully provisioned. This loop periodically checks the lakehouse details until the SQL endpoint link is available.\r\n",
+					"dest_sqlendpointlink = None\r\n",
+					"while not dest_sqlendpointlink:\r\n",
+					"    sleep(30)  # Wait for the lakehouse to be fully provisioned\r\n",
+					"    url_lakehouse_details = url_lakehouse + f\"/{dest_lakehouseid}\"\r\n",
+					"    response = requests.get(url_lakehouse_details, headers=headers)\r\n",
+					"    if response.status_code == http_ok_code:\r\n",
+					"        properties = response.json().get('properties', {})\r\n",
+					"        sql_endpoint_properties = properties.get('sqlEndpointProperties', {})\r\n",
+					"        dest_sqlendpointlink = sql_endpoint_properties.get('connectionString', None)\r\n",
+					"        if dest_sqlendpointlink:\r\n",
+					"            print(f\"SQL Endpoint Link: {dest_sqlendpointlink}\")\r\n",
+					"            break\r\n",
+					"    else:\r\n",
+					"        raise requests.HTTPError(f\"Failed to retrieve lakehouse details: {response.text}\")\r\n",
+					"\r\n",
+					"# You can now use 'dest_sqlendpointlink' as needed\r\n",
+					""
+				],
+				"execution_count": 31
+			}
+		]
+	}
+}

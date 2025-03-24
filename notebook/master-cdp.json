@@ -1,0 +1,394 @@
+{
+	"name": "master-cdp",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/logging"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "4ad187fd-873f-47e7-969c-8707600a881a"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"source": [
+					"# neuacc-odp-master\n",
+					"\n",
+					"\n",
+					"## Overview\n",
+					"\n",
+					"| Detail Tag | Information |\n",
+					"|------------|-------------|\n",
+					"|Originally Created By | [jessica.roux@neudesic.com](mailto:jessica.roux@neudesic.com)|\n",
+					"|Description | This is the master notebook that will call all necessary child notebooks to complete the process.|\n",
+					"\n",
+					"## History\n",
+					"\n",
+					"| Date | Developed By | Change |\n",
+					"|:----:|--------------|--------|\n",
+					"|10-19-2023| Jessica Roux | Created notebook |"
+				]
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"# Imports\n",
+					"from pyspark.sql import functions as F\n",
+					"from pyspark.sql.functions import *\n",
+					"from delta.tables import *\n",
+					"from pyspark.sql.functions import expr\n",
+					"from notebookutils import mssparkutils\n",
+					"import networkx as nx # added as library to cluster\n",
+					"spark.conf.set(\"spark.sql.parquet.int96RebaseModeInWrite\", \"CORRECTED\")\n",
+					""
+				],
+				"execution_count": 31
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Framework notebook execution to initialize underlying functions used:"
+				]
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 32
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/logging/neuacc-odp-logging"
+				],
+				"execution_count": 33
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Parameter Cell for Reusable Code Components  \n",
+					"\n",
+					"**table_category**: specifies the table category prefix which will be run for categories tied to each layer (query and sanctioned). These category prefixes correlate to the metadata fields for target_table_category in file_ingestion and table definition  \n",
+					"**overwrite**: can be \"yes\" or \"no\" and will determine if data is loaded to the taget table as an overwrite or incremental merge  \n",
+					"**target_table_name**: specifies the target fact table which will be loaded in the sanctioned later and is used to isolate independent sequencing for fact tables. The table name correlates to the metadata field for target_table_name in table definition.  "
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"table_category=\"\"#'crm'\n",
+					"overwrite=\"\"#es\n",
+					"target_table_name=\"\"#fact_opportunity\n",
+					"\n",
+					"\n",
+					"\n",
+					""
+				],
+				"execution_count": 34
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#DEFAULT PARAMETERS\n",
+					"file_ingest_notebook_path = \"neudesic-odp/sources/ingestion-file-cdp\"\n",
+					"db_ingest_notebook_path = \"neudesic-odp/sources/neuacc-odp-ingestion-database\"\n",
+					"medallion_notebook_path = \"neudesic-odp/architecture/neuacc-odp-architecture-medallion\"\n",
+					"metadata_schema=\"frameworkdb\"\n",
+					"pipeline_id=\"1\""
+				],
+				"execution_count": 35
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Spark and Delta Lake Optimization Summary\n",
+					"\n",
+					"This configuration guide provides key Spark and Delta Lake settings to enhance performance, especially for data-intensive operations:\n",
+					"\n",
+					"- **General Configurations**: Set shuffle partitions and parallelism to optimize resource allocation and disable Delta retention checks as needed.\n",
+					"  \n",
+					"- **Delta Lake Optimizations**: Enable optimized writes and auto-compaction to reduce the number of files and manage partition sizes, improving write performance and storage efficiency.\n",
+					"  \n",
+					"- **Merge-Specific Optimizations**: Use adaptive execution to handle skewed joins, coalesce partitions, and adjust merge batch sizes for better memory management in merge operations.\n",
+					"  \n",
+					"- **Compaction**: Set a minimum number of files to trigger auto-compaction, reducing the overhead of managing many small files.\n",
+					"\n",
+					"Together, these settings aim to streamline Spark jobs, optimize Delta Lake storage, and handle large-scale data transformations efficiently.\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#SPARK OPTIMIZATIONS\n",
+					"\n",
+					"# General\n",
+					"spark.conf.set(\"spark.sql.shuffle.partitions\", \"200\")\n",
+					"spark.conf.set(\"spark.default.parallelism\", \"200\")\n",
+					"spark.conf.set(\"spark.databricks.delta.retentionDurationCheck.enabled\", False)\n",
+					"\n",
+					"# Delta Optimizations\n",
+					"spark.conf.set(\"spark.databricks.delta.optimizeWrite.enabled\", \"true\")\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.enabled\", \"true\")\n",
+					"spark.conf.set(\"spark.sql.files.maxPartitionBytes\", \"134217728\")\n",
+					"spark.conf.set(\"spark.sql.files.minPartitionNum\", \"4\")\n",
+					"\n",
+					"# Merge-Specific\n",
+					"spark.conf.set(\"spark.sql.adaptive.enabled\", \"true\")\n",
+					"spark.conf.set(\"spark.sql.adaptive.coalescePartitions.enabled\", \"true\")\n",
+					"spark.conf.set(\"spark.sql.adaptive.skewJoin.enabled\", \"true\")\n",
+					"spark.conf.set(\"spark.databricks.delta.merge.batchSize\", \"10000\")\n",
+					"\n",
+					"# Compaction\n",
+					"spark.conf.set(\"spark.databricks.delta.autoCompact.minNumFiles\", \"5\")\n",
+					""
+				],
+				"execution_count": 36
+			},
+			{
+				"cell_type": "code",
+				"source": [
+					"# Variables\n",
+					"\n",
+					"getMetadata = metadataReader(metadata_schema)\n",
+					"if not spark.catalog.tableExists(f'{metadata_schema}.metadata_table_dependency'):\n",
+					"    create_table_dependency(metadata_schema)\n",
+					" "
+				],
+				"execution_count": 37
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Process Query Layer  \n",
+					"Creates a threadpool to execute all query tables in parallel  \n",
+					"Runs all query table loads using the process_wrapper function  "
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\n",
+					"import concurrent.futures\n",
+					"from multiprocessing.pool import ThreadPool\n",
+					"\n",
+					"\n",
+					"arr=spark.table('frameworkdb.metadata_file_ingestion').select(\"source_table_name\").filter(F.col('target_table_category').contains(table_category)).collect()\n",
+					"\n",
+					"bronze_tables=[x[0] for x in arr]\n",
+					"\n",
+					"# Set the number of workers\n",
+					"workers = len(bronze_tables) if len(bronze_tables) > 1 else None\n",
+					"\n",
+					"# Create a ThreadPool\n",
+					"pool = ThreadPool(processes=workers)\n",
+					"\n",
+					"# Map the tasks to the pool\n",
+					"results = pool.map(process_wrapper, bronze_tables)\n",
+					"\n",
+					"# Close the pool and wait for the tasks to complete\n",
+					"pool.close()\n",
+					"pool.join()\n",
+					"\n",
+					"# Print results\n",
+					"for result in results:\n",
+					"    print(result)\n",
+					"\n",
+					"\n",
+					""
+				],
+				"execution_count": 38
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Process Sanctioned Layer  \n",
+					"Execute child notebook for loading the sanctioned layer according to dependencies   "
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"mssparkutils.notebook.run(medallion_notebook_path, 5600, {\"useRootDefaultLakehouse\": True,\n",
+					"                                                                    \"target_table_category\": table_category,\n",
+					"                                                                    \"target_table_name\": target_table_name,\n",
+					"                                                                    \"metadata_schema\": metadata_schema,\n",
+					"                                                                    \"pipeline_id\": pipeline_id,\n",
+					"                                                                    \"overwrite\": overwrite})"
+				],
+				"execution_count": 39
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Logging step \n",
+					"- Append logs to logging table.\n",
+					"- Output string to send out appropriate email of error log\n",
+					"- function can be found in %run neudesic-odp/logging/neuacc-odp-logging"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"import json\n",
+					"import re\n",
+					"try:\n",
+					"    log_to_write=[[json.loads(x)[\"source_table_name\"],json.loads(x)['error_message']] for x in results if \"SUCCESSFUL\" not in json.loads(x)['error_message']]\n",
+					"    append_error_log(log_to_write, table_category)\n",
+					"    mssparkutils.notebook.exit((\"ERROR LOG : \"+ str(\"\".join([f\"Table Name: {entry[0]}\\nError Details: {remove_special_characters(entry[1])}\\n\" for entry in log_to_write]))).replace('\"',\"'\"))\n",
+					"except Exception as e:\n",
+					"    if \"can not infer schema from empty dataset\" in str(e):\n",
+					"        mssparkutils.notebook.exit(\"ALL SUCCEEDED\")\n",
+					"    mssparkutils.notebook.exit(\"SPARK ERROR: \" + remove_special_characters(str(e)))"
+				],
+				"execution_count": 42
+			}
+		]
+	}
+}

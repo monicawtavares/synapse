@@ -1,0 +1,1285 @@
+{
+	"name": "ingestion-file-cdp",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/sources"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "210a281e-4120-43a7-a7c6-a91574ed60ac"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# neuacc-odp-ingestion-file\n",
+					"\n",
+					"\n",
+					"## Overview\n",
+					"\n",
+					"|Description | This notebook supports in the file ingestion process. Leveraging the metadata templates, this notebook will move source file data into query.|\n",
+					"\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Framework notebook execution to initialize underlying functions used:"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"%run neudesic-odp/logging/neuacc-odp-logging"
+				],
+				"execution_count": 1
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 2
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"spark.conf.set(\"spark.databricks.delta.schema.autoMerge.enabled\", True)\n",
+					"spark.conf.set(\"spark.sql.streaming.metricsEnabled\", True)\n",
+					"spark.conf.set(\"spark.sql.streaming.schemaInference\",True)\n",
+					"spark.conf.set(\"spark.sql.parquet.int96RebaseModeInWrite\", \"CORRECTED\")"
+				],
+				"execution_count": 3
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"# Updating time zone\n",
+					"\n",
+					"eastern = pytz.timezone('US/Eastern')"
+				],
+				"execution_count": 4
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from notebookutils import mssparkutils\n",
+					"#keyvault integration for storage account details\n",
+					"secret_value = mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountKey\", \"AzureKeyVault\")\n",
+					"adls_account_name=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountName\", \"AzureKeyVault\")\n",
+					"\n",
+					"spark.conf.set(f\"spark.hadoop.fs.azure.account.key.chem{get_current_env()}eussa.dfs.core.windows.net\", secret_value)"
+				],
+				"execution_count": 5
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"### Parameter Cell for Reusable Code Components  \n",
+					"\n",
+					"- **target_table_category**: specifies the table category prefix which will be run for categories tied to each layer (query and sanctioned). These category prefixes correlate to the metadata fields for target_table_category in file_ingestion and table definition  eg crm\n",
+					"- **overwrite**: can be \"yes\" or \"no\" and will determine if data is loaded to the taget table as an overwrite or incremental merge  eg yes or no\n",
+					"- **source_table_name**: specifies the source base table which will be loaded in the query layer. The table name correlates to the metadata field for source_table_name in metadata_file_ingestion eg account_partitioned"
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"metadata_schema=\"\" #\"frameworkdb\"\n",
+					"target_table_category=\"\" #\"crm-query\"\n",
+					"source_table_name=\"\"\n",
+					"pipeline_id=\"\" #\"1\"\n",
+					"overwrite=\"\"#yes\""
+				],
+				"execution_count": 6
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Necessary variables for logging\n",
+					"start_time = datetime.datetime.now(eastern)\n",
+					"ingestion_type = 'File'\n",
+					"#logTables = insert_logging(metadata_schema) # Creating an instance of insert_logging class\n",
+					"MetadataReaderClass = metadataReader(metadata_schema)"
+				],
+				"execution_count": 7
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Function: `bronze_batch_process`\n",
+					"\n",
+					"This function processes each micro-batch of data during streaming ingestion and performs a Slowly Changing Dimension Type 2 (SCD Type 2) merge into the bronze Delta table. It adds system columns (`IsActive`, `EffectiveFrom`, `EffectiveTo`), constructs merge conditions based on primary keys, and updates existing records or inserts new ones accordingly. If Change Data Feed (CDF) is enabled (for `fno` and `crm`), it handles updates and deletions differently—using change data feed logs for updates and inserts—to maintain historical data accurately.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Explanation\n",
+					"\n",
+					"### Purpose\n",
+					"\n",
+					"Processes each micro-batch DataFrame `batch_df` by performing SCD Type 2 merges into the bronze Delta table.\n",
+					"\n",
+					"### Merge Condition Construction\n",
+					"\n",
+					"- Checks if `overwrite` is not `'yes'` and a `primary_key` is provided.\n",
+					"  - Constructs a list `pk_list` of primary keys.\n",
+					"  - Builds the `on_condition` for the merge statement, combining primary keys and checking that `IsActive` is `'1'`.\n",
+					"  - If no merge is needed, updates the `row_count` and returns.\n",
+					"\n",
+					"### Batch Processing\n",
+					"\n",
+					"- Counts the number of rows in the current batch and updates the `row_count`.\n",
+					"\n",
+					"### Data Transformation\n",
+					"\n",
+					"#### With CDF\n",
+					"\n",
+					"- If `cdf` is `'yes'`, handles Change Data Feed (CDF) data.\n",
+					"- Processes differently based on `target_table_category` (e.g., `'fo'`, `'crm'`).\n",
+					"- Adds system columns and filters records based on `_change_type`.\n",
+					"\n",
+					"#### Without CDF\n",
+					"\n",
+					"- Adds system columns (`IsActive`, `EffectiveFrom`, `EffectiveTo`).\n",
+					"- Extracts the input file timestamp for ordering.\n",
+					"- Uses a window function to keep only the most recent records based on `input_file_timestamp`.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"# Merge Operation\n",
+					"\n",
+					"## Implementing SCD Type 2 Merge with Separate Update and Append Operations\n",
+					"\n",
+					"### Introduction\n",
+					"\n",
+					"Slowly Changing Dimension (SCD) Type 2 is a data warehousing technique used to track historical changes in dimension data over time by maintaining multiple records for a given natural key. Each record represents a specific version of the data, differentiated by effective dates and an active flag. This approach preserves historical data, allowing for accurate historical reporting and trend analysis.\n",
+					"\n",
+					"This documentation focuses on implementing an SCD Type 2 merge operation where the update and insert (append) actions are performed separately. Specifically, the merge operation is used only to update existing records, and a subsequent append operation is used to insert new records. This method is particularly effective for handling deletes and merges in the source data, ensuring that historical data integrity is maintained.\n",
+					"\n",
+					"### Key Concepts\n",
+					"\n",
+					"- **Dimension Table**: A table that contains attributes about data that can change over time.\n",
+					"- **SCD Type 2**: A methodology that tracks historical data by creating new records instead of updating existing ones.\n",
+					"- **Primary Key**: A unique identifier for records in a table.\n",
+					"- **Effective Dates**: Columns that indicate the time period during which a record is valid (`EffectiveFrom`, `EffectiveTo`).\n",
+					"- **IsActive Flag**: An indicator (`'1'` or `'0'`) signifying whether a record is the current active record.\n",
+					"\n",
+					"### Process Overview\n",
+					"\n",
+					"The SCD Type 2 merge process involves two main steps:\n",
+					"\n",
+					"1. **Update Existing Records**: Use a merge operation to mark existing records as inactive and set their `EffectiveTo` date.\n",
+					"2. **Append New Records**: Insert new records into the target table with updated information and system columns.\n",
+					"\n",
+					"By separating the update and insert actions, we can more precisely control how data changes are applied, which is crucial for accurately reflecting deletes and merges from the source data.\n",
+					"\n",
+					"### Detailed Steps\n",
+					"\n",
+					"#### 1. Prepare the Incoming Data\n",
+					"\n",
+					"- **Add System Columns**:\n",
+					"  - `IsActive`: Set to `'1'` for incoming records.\n",
+					"  - `EffectiveFrom`: Set to the current timestamp when the record becomes effective.\n",
+					"  - `EffectiveTo`: Set to a placeholder future date (e.g., `'9999-12-31 23:59:59.997'`) to indicate an open-ended validity period.\n",
+					"- **Filter Relevant Records**:\n",
+					"  - For Change Data Capture (CDC) scenarios, filter records based on change types (e.g., `'update_postimage'`, `'insert'`).\n",
+					"\n",
+					"#### 2. Identify Records to Update\n",
+					"\n",
+					"- **Determine Records for Update**:\n",
+					"  - Use primary key(s) to identify existing records in the target table that correspond to incoming records.\n",
+					"  - These are records where the natural key matches but the data has changed.\n",
+					"\n",
+					"#### 3. Perform Merge Operation (Update Only)\n",
+					"\n",
+					"- **Construct Merge Condition**:\n",
+					"  - Use primary key(s) and the `IsActive` flag to match active records in the target table.\n",
+					"  - The condition ensures that only the current active records are considered for updating.\n",
+					"\n",
+					"- **Execute Merge to Update Records**:\n",
+					"  - **When Matched**:\n",
+					"    - **Update Action Only**: Set `IsActive` to `'0'` and `EffectiveTo` to the current timestamp for matched records.\n",
+					"    - **No Insert Action**: Do not insert new records during the merge operation.\n",
+					"\n",
+					"- **Result of Merge**:\n",
+					"  - Existing active records that have changes are now marked as inactive, with their `EffectiveTo` date reflecting when they became obsolete.\n",
+					"\n",
+					"#### 4. Append New Records\n",
+					"\n",
+					"- **Insert New Versions of Records**:\n",
+					"  - After the merge operation, append the incoming records to the target table.\n",
+					"  - These records represent the new active versions, with `IsActive` set to `'1'` and `EffectiveFrom` set to the current timestamp.\n",
+					"  - The `EffectiveTo` remains as the placeholder future date.\n",
+					"\n",
+					"- **Handling New Inserts**:\n",
+					"  - Records that are entirely new (no matching primary key in the target table) are also included in the append operation.\n",
+					"\n",
+					"#### 5. Maintain Historical Records\n",
+					"\n",
+					"- **Historical Data Preservation**:\n",
+					"  - The target table now contains both inactive records (historical data) and active records (current data).\n",
+					"  - Each record's validity period is defined by `EffectiveFrom` and `EffectiveTo`.\n",
+					"\n",
+					"- **Handling Deletes and Merges**:\n",
+					"  - **Deletes**:\n",
+					"    - When a record is deleted in the source, mark the corresponding record in the target table as inactive during the merge.\n",
+					"    - No new record is appended, effectively closing the record's validity period.\n",
+					"  - **Merges**:\n",
+					"    - When records are merged in the source (e.g., duplicate records consolidated), update the affected records to inactive and append the merged record as a new entry.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"## Considerations\n",
+					"\n",
+					"### Primary Key Handling\n",
+					"\n",
+					"- **Accurate Matching**:\n",
+					"  - Ensure that the primary keys are correctly identified and used in the merge condition.\n",
+					"  - This is critical for accurately identifying records that need to be updated.\n",
+					"\n",
+					"- **Composite Keys**:\n",
+					"  - If using composite primary keys, combine them appropriately in the merge condition.\n",
+					"\n",
+					"### Change Data Capture (CDC)\n",
+					"\n",
+					"- **Change Types**:\n",
+					"  - Handle different change types (`insert`, `update`, `delete`) appropriately.\n",
+					"  - Use CDC metadata to filter and process records accordingly.\n",
+					"\n",
+					"### Example Scenario\n",
+					"\n",
+					"Imagine a product dimension table where product attributes can change over time, such as price or description.\n",
+					"\n",
+					"#### Initial Load\n",
+					"\n",
+					"- **Insert New Products**:\n",
+					"  - Products are loaded into the target table via the append operation or initial overwrite operation.\n",
+					"  - Each product has `IsActive = '1'`, `EffectiveFrom` set to the load timestamp, and `EffectiveTo` set to the placeholder future date.\n",
+					"\n",
+					"#### Product Update\n",
+					"\n",
+					"- **Price Change**:\n",
+					"  - When a product's price changes, during the merge operation:\n",
+					"    - The existing active record is updated: `IsActive` set to `'0'`, `EffectiveTo` set to the current timestamp.\n",
+					"  - During the append operation:\n",
+					"    - A new record for the product is inserted with the updated price, `IsActive = '1'`, `EffectiveFrom` set to the current timestamp.\n",
+					"\n",
+					"#### Product Deletion\n",
+					"\n",
+					"- **Discontinued Product**:\n",
+					"  - When a product is discontinued (deleted from the source):\n",
+					"    - During the merge operation, the existing active record is updated to `IsActive = '0'`, `EffectiveTo` set to the current timestamp.\n",
+					"    - No new record is appended, effectively closing the product's validity period.\n",
+					"\n",
+					"---\n",
+					"\n",
+					"By following this approach, we ensure that all historical changes are accurately captured and that the current state of each record is clearly indicated. This method allows for comprehensive historical analysis and supports complex scenarios such as deletions and merges in the source data."
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"# This function writes the current batch data to the bronze path\n",
+					"# This function is called in writeStream.foreachBatch() method in file ingestion notebook\n",
+					"# Adds a LoadDate column with the current date\n",
+					"from pyspark.sql.functions import *\n",
+					"from pyspark.sql.window import Window\n",
+					"from pyspark.sql import functions as F\n",
+					"\n",
+					"\n",
+					"\n",
+					"def bronze_batch_process(batch_df, batch_id, bronze_path, row_count, source_table_name, primary_key, bronze_name, cdf , source_storage_container_name, cdf_path):\n",
+					"    print(\"enetred bronze_batch_process\")\n",
+					"    #add cdf parameter in frameworkdb.metadata_ingestion_file\n",
+					"    #cdf=\"yes\"\n",
+					"\n",
+					"    #primaryKey=primary_key\n",
+					"    if overwrite!=\"yes\" and primary_key is not None:\n",
+					"        pk_list = [pk.strip() for pk in primary_key.split(',')]\n",
+					"            \n",
+					"        # Construct the ON condition for the merge statement\n",
+					"        on_condition = ' AND '.join([f\"existing.{pk} = incoming.{pk}\" for pk in pk_list])\n",
+					"        on_condition += \" AND existing.IsActive = '1'\"\n",
+					"        if target_table_category ==\"fo\" or target_table_category==\"crm\":\n",
+					"            batch_df1=batch_df.drop(\"_change_type\",\"_commit_timestamp\")\\\n",
+					"                    .withColumnRenamed(\"change_type\",\"_change_type\")\\\n",
+					"                    .withColumnRenamed(\"commit_timestamp\",\"_commit_timestamp\")\n",
+					"\n",
+					"\n",
+					"        print(\"****PRIMARY KEYS FOUND. MERGE CONDITION :\" +  on_condition + \" *****\")\n",
+					"    elif overwrite==\"yes\" and ( target_table_category ==\"fo\" or target_table_category==\"crm\"):\n",
+					"        pk_list = [pk.strip() for pk in primary_key.split(',')]\n",
+					"            \n",
+					"        # Construct the ON condition for the merge statement\n",
+					"        on_condition = ' AND '.join([f\"existing.{pk} = incoming.{pk}\" for pk in pk_list])\n",
+					"        on_condition += \" AND existing.IsActive = '1'\"\n",
+					"        batch_df1= spark.table(\"cdf_logs.\" + bronze_name.replace(\".\", \"_\") + \"_cdc\").withColumnRenamed(\"change_type\",\"_change_type\")\\\n",
+					"                                                                                   .withColumnRenamed(\"commit_timestamp\",\"_commit_timestamp\")\n",
+					"    else: \n",
+					"        print(\"****NO PRIMARY KEYS NOT FOUND OR OVERWRITE = YES. OVERWRITE COMPLETED ABOVE. NO NEED FOR MERGE\")\n",
+					"        row_count.add(spark.table(bronze_name).count())\n",
+					"        return\n",
+					"    \n",
+					"    \n",
+					"    batch_count = batch_df.count()\n",
+					"    row_count.add(batch_count)\n",
+					"\n",
+					"    \n",
+					"\n",
+					"    \n",
+					"\n",
+					"    try:\n",
+					"\n",
+					"        if cdf==\"yes\":\n",
+					"                if target_table_category==\"fo\":\n",
+					"                    # Adding system columns\n",
+					"                    step = \"adding system columns\"\n",
+					"                    # Add SCD Type 2 columns\n",
+					"                    new_df1 = batch_df1.withColumn('IsActive', lit('1')) \\\n",
+					"                                    .withColumn('EffectiveFrom', col('SinkCreatedOn')) \\\n",
+					"                                    .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                                    .filter(\"`_change_type`=='update_postimage' or `_change_type`=='insert'\")\n",
+					"                                \n",
+					"                    primary_key=[x.strip() for x in primary_key.split(',')]\n",
+					"                    w=Window().partitionBy(primary_key).orderBy(F.col(\"_commit_timestamp\").desc())\n",
+					"                    window_spec = Window().partitionBy(primary_key).orderBy(\"EffectiveFrom\")\n",
+					"\n",
+					"                    new_df2 = new_df1.withColumn('row_num', row_number().over(w))\\\n",
+					"                                .withColumn('IsActive', when(col('isDelete') == True, lit('0'))\\\n",
+					"                                                       .when(col('row_num') == 1, lit('1'))\\\n",
+					"                                                       .otherwise(lit('0')))\\\n",
+					"                                .withColumn(\"EffectiveTo\",when((col(\"IsActive\") == 0) & (col(\"EffectiveTo\").like(\"9999%\")),lead(\"EffectiveFrom\").over(window_spec)).otherwise(col(\"EffectiveTo\")))\\\n",
+					"                                .drop('row_num',\"_change_type\",\"_commit_timestamp\")\n",
+					"                    print(\"**** EXECUTING CDF TYPE 2 MERGE *****\")\n",
+					"                    \n",
+					"                if target_table_category==\"crm\":\n",
+					"                    source_table = source_storage_container_name.replace(\"-\",\"_\")+'.'+source_table_name.replace(\"_partitioned\",\"\")\n",
+					"                    metadata_table1=\"GlobalOptionsetMetadata\"\n",
+					"                    metadata_table2=\"OptionsetMetadata\"\n",
+					"                    table_df = spark.sql(f\"SELECT * FROM {source_table}\")\n",
+					"                    table_columns = [x.lower() for x in table_df.columns]\n",
+					"                    spark_sql1=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM {source_storage_container_name.replace(\"-\",\"_\")}.{metadata_table1} \n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"\n",
+					"\n",
+					"                    spark_sql2=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM {source_storage_container_name.replace(\"-\",\"_\")}.{metadata_table2}\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"                    \n",
+					"                    spark.sql(f\"\"\"SELECT 'statecode' AS OptionSetName, CAST(State AS STRING) as Option,LocalizedLabel, EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.StatusMetadata UNION ALL SELECT 'statuscode' AS OptionSetName, CAST(Status AS STRING) as Option,LocalizedLabel,EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.StatusMetadata\"\"\")\\\n",
+					"                    .createOrReplaceTempView(\"status_view\")\n",
+					"\n",
+					"                    spark_sql3=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM status_view\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"                    \n",
+					"                    spark.sql(f\"\"\"SELECT DISTINCT 'new_nationality' AS OptionSetName, a.new_nationality AS Option, c.new_name AS LocalizedLabel, 'account' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.account a JOIN {source_storage_container_name.replace(\"-\",\"_\")}.new_counrty c ON a.new_nationality = c.new_counrtyid UNION ALL SELECT DISTINCT 'new_additionaladdresscountry' AS OptionSetName, a.new_additionaladdresscountry AS Option, c.new_name AS LocalizedLabel, 'account' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.account a JOIN {source_storage_container_name.replace(\"-\",\"_\")}.new_counrty c ON a.new_additionaladdresscountry = c.new_counrtyid UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'appointment' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.appointment UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'email' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.email UNION ALL SELECT DISTINCT 'objecttypecode' AS OptionSetName, objecttypecode AS Option, objecttypecode AS LocalizedLabel, 'annotation' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.annotation UNION ALL SELECT DISTINCT 'templatetypecode' AS OptionSetName, templatetypecode AS Option, templatetypecode AS LocalizedLabel, 'template' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.template UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'task' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.task UNION ALL SELECT DISTINCT 'objecttypecode' AS OptionSetName, objecttypecode AS Option, objecttypecode AS LocalizedLabel, 'resource' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.resource UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'recurringappointmentmaster' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.recurringappointmentmaster UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'activitypointer' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.activitypointer UNION ALL SELECT DISTINCT 'new_chemonicsrbu' AS OptionSetName, new_chemonicsrbu AS Option, new_chemonicsrbu AS LocalizedLabel, 'lead' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.lead;\"\"\").createOrReplaceTempView(\"missing_mapping_view\")\n",
+					"                    \n",
+					"                    spark_sql4=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM missing_mapping_view\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"\n",
+					"                    dictionary_df=spark.sql(spark_sql1).union(spark.sql(spark_sql2)).union(spark.sql(spark_sql3)).union(spark.sql(spark_sql4))\n",
+					"\n",
+					"                    batch_df2 = map_option_sets(batch_df1, dictionary_df)\n",
+					"\n",
+					"                    step = \"adding system columns\"\n",
+					"                    # Add SCD Type 2 columns\n",
+					"                    new = batch_df2.withColumn('IsActive', lit('1')) \\\n",
+					"                                    .withColumn('EffectiveFrom', col('SinkCreatedOn')) \\\n",
+					"                                    .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                                    .filter(\"`_change_type`=='update_postimage' or `_change_type`=='insert'\")\n",
+					"                                \n",
+					"                    primary_key=[x.strip() for x in primary_key.split(',')]\n",
+					"                    w=Window().partitionBy(primary_key).orderBy(F.col(\"_commit_timestamp\").desc())\n",
+					"                    window_spec = Window().partitionBy(primary_key).orderBy(\"EffectiveFrom\")\n",
+					"                    new_df2 = new.withColumn('row_num', row_number().over(w)) \\\n",
+					"                                .withColumn('IsActive', when(col('isDelete') == True, lit('0'))\\\n",
+					"                                                       .when(col('row_num') == 1, lit('1'))\\\n",
+					"                                                       .otherwise(lit('0')))\\\n",
+					"                                .withColumn(\"EffectiveTo\",when((col(\"IsActive\") == 0) & (col(\"EffectiveTo\").like(\"9999%\")),lead(\"EffectiveFrom\").over(window_spec)).otherwise(col(\"EffectiveTo\")))\\\n",
+					"                                .drop('row_num',\"_change_type\",\"_commit_timestamp\")\n",
+					"\n",
+					"\n",
+					"        else:\n",
+					"                \n",
+					"                new_df1 = batch_df.withColumn('IsActive', lit('1')) \\\n",
+					"                                .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"                                .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                                .withColumn(\"input_file_name\",  F.regexp_extract(F.input_file_name(), r'(\\d{4}-\\d{2}-\\d{2}/\\d{2}/\\d{2})', 1))\\\n",
+					"                                .withColumn(\"input_file_timestamp\", F.to_timestamp(F.regexp_replace(\"input_file_name\", '/', ' '), \"yyyy-MM-dd HH mm\")).drop(\"input_file_name\")\n",
+					"\n",
+					"                print(\"**** EXECUTING TYPE 2 MERGE *****\")\n",
+					"                primary_key=[x.strip() for x in primary_key.split(',')]\n",
+					"                w=Window().partitionBy(primary_key).orderBy(F.col(\"input_file_timestamp\").desc())\n",
+					"                new_df2= new_df1.withColumn('row_num', row_number().over(w))\\\n",
+					"                            .filter(\"row_num==1\").drop('row_num')\n",
+					"\n",
+					"                            \n",
+					"        \n",
+					"\n",
+					"        \n",
+					"\n",
+					"        # Check if the table already exists\n",
+					"            \n",
+					"        print(\"**** MERGE IN PROGRESS ****\")\n",
+					"        # If table exists, perform SCD Type 2 upsert\n",
+					"        \n",
+					"        if cdf==\"no\":\n",
+					"            step = \"Upsert scd type 2 records\"\n",
+					"            existing_table = DeltaTable.forName(spark, bronze_name)\n",
+					"            \n",
+					"            \n",
+					"            \n",
+					"            existing_table.alias(\"existing\") \\\n",
+					"                    .merge(\n",
+					"                        new_df2.alias(\"incoming\"),\n",
+					"                        on_condition\n",
+					"                    ).whenMatchedUpdate(\n",
+					"                        set={\n",
+					"                            \"EffectiveTo\": \"current_timestamp()\",\n",
+					"                            \"isActive\": \"0\"\n",
+					"                        }\n",
+					"                    ).execute()\n",
+					"\n",
+					"            new_df2.write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"        else:\n",
+					"            extracted_schema=spark.table(bronze_name).schema\n",
+					"            common_columns = [col.name for col in extracted_schema.fields if col.name in new_df2.columns]\n",
+					"            new_df3 = new_df2.select(*[new_df2[col].cast(extracted_schema[col].dataType) if col in common_columns else new_df2[col] for col in new_df2.columns])\n",
+					"\n",
+					"\n",
+					"            on_condition += \" AND incoming.IsActive = '1' \"\n",
+					"            step = \"Upsert scd type 2 records- Historical merge\"\n",
+					"            existing_table = DeltaTable.forName(spark, bronze_name)\n",
+					"            \n",
+					"            \n",
+					"            \n",
+					"            existing_table.alias(\"existing\") \\\n",
+					"                    .merge(\n",
+					"                        new_df3.alias(\"incoming\"),\n",
+					"                        on_condition\n",
+					"                    ).whenMatchedUpdate(\n",
+					"                        set={\n",
+					"                            \"EffectiveTo\": \"current_timestamp()\",\n",
+					"                            \"isActive\": \"0\"\n",
+					"                        }\n",
+					"                    ).execute()\n",
+					"            \n",
+					"            new_df3.write.format(\"delta\").mode(\"append\").save(bronze_path)\n",
+					"            \n",
+					"\n",
+					"        \n",
+					"\n",
+					"\n",
+					"        print('**** SCD TYPE 2 ( FOR UPDATES AND DELETES) - MERGE COMPLETED ****')\n",
+					"\n",
+					"\n",
+					"        return\n",
+					"\n",
+					"    except Exception as e:\n",
+					"        raise Exception(f\"Bronze batch process failed at {step}. Error: {str(e)}\")\n",
+					"\n",
+					""
+				],
+				"execution_count": 8
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Read Streaming Data"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Function: read_data\n",
+					"- read_data reads streaming data from the specified source path based on the file type (JSON, CSV, Parquet, or Delta). \n",
+					"- It configures the reader options according to the file format, handles schema inference, and prepares the DataFrame df_landing for further processing. \n",
+					"- The function also manages special cases like overwriting existing tables, handling primary keys, and enabling CDF for Delta tables to capture incremental changes.\n",
+					"\n",
+					"##### Explanation:\n",
+					"\n",
+					"###### Purpose:\n",
+					"\n",
+					"###### Reads data from the specified `source_path` using streaming, based on the `file_type` and other configurations.\n",
+					"\n",
+					"###### File Type Handling:\n",
+					"\n",
+					"###### JSON Files:\n",
+					"- Uses `spark.readStream.format(\"json\")` to read JSON files.\n",
+					"- Sets the `multiLine` option based on the `multiline` parameter.\n",
+					"- Adds a `SourceTableName` column using `input_file_name()` to capture the source file name.\n",
+					"\n",
+					"###### CSV Files:\n",
+					"- Uses `spark.readStream.format(\"csv\")` to read CSV files.\n",
+					"- Sets the `sep` (delimiter) and `header` options based on the provided parameters.\n",
+					"- Adds a `SourceTableName` column.\n",
+					"\n",
+					"###### Parquet Files:\n",
+					"- If `overwrite` is `'yes'` or the bronze table does not exist, and a `primary_key` is provided:\n",
+					"  - Reads the data using `spark.read.parquet`.\n",
+					"  - Adds system columns (`IsActive`, `EffectiveFrom`, `EffectiveTo`, etc.).\n",
+					"  - Performs deduplication based on the `primary_key` and overwrites the bronze table.\n",
+					"  - Creates the bronze table if it doesn't exist.\n",
+					"  - Reads the data back into a streaming DataFrame.\n",
+					"- If `primary_key` is `None`:\n",
+					"  - Similar overwrite logic without partitioning on `primary_key`.\n",
+					"- If no overwrite is needed:\n",
+					"  - Reads the data directly into a streaming DataFrame.\n",
+					"\n",
+					"###### Delta Files:\n",
+					"- Handles delta files with Change Data Feed (CDF) enabled.\n",
+					"- Logic includes managing overwrite versions and reading changes.\n",
+					"\n",
+					"### Exception Handling:\n",
+					"\n",
+					"###### Catches any exceptions during the read process and prints an error message.\n",
+					"\n",
+					"### Return Value:\n",
+					"\n",
+					"###### Returns the streaming DataFrame `df_landing`.\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"# Check if the file type is JSON, csv, or parquet and read streaming data from the source_path\n",
+					"# df_landing is the streaming data frame\n",
+					"\n",
+					"def read_data(file_type, delimiter, first_row_is_header, multiline, source_path, source_table_name, bronze_path, bronze_name, raw_checkpoint_location, primary_key, source_storage_container_name, cdf_path):\n",
+					"    \n",
+					"    try:\n",
+					"        if file_type == 'json':\n",
+					"            # Reading JSON data using the json format\n",
+					"            df_landing = spark.readStream.format(\"json\")\\\n",
+					"            .option(\"multiLine\", f\"{multiline}\")\\\n",
+					"            .load(source_path).withColumn('SourceTableName', input_file_name())\n",
+					"        \n",
+					"        elif file_type == 'csv':\n",
+					"            # Reading csv data using the csv format\n",
+					"            df_landing = spark.readStream.format(\"csv\")\\\n",
+					"            .option('sep', delimiter) \\\n",
+					"            .option('header',first_row_is_header)\\\n",
+					"            .load(source_path)\\\n",
+					"            .withColumn('SourceTableName', input_file_name())\n",
+					"\n",
+					"        elif file_type == 'parquet':\n",
+					"            # Reading parquet data using the parquet format\n",
+					"            if (overwrite=='yes' or spark.catalog.tableExists(bronze_name)==False) and primary_key is not None:\n",
+					"                \n",
+					"                new_df1=spark.read.parquet(source_path)\\\n",
+					"                     .withColumn('IsActive', lit('1')) \\\n",
+					"                        .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"                        .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                        .withColumn(\"input_file_name\",  F.regexp_extract(F.input_file_name(), r'(\\d{4}-\\d{2}-\\d{2}/\\d{2}/\\d{2})', 1))\\\n",
+					"                        .withColumn(\"input_file_timestamp\", F.to_timestamp(F.regexp_replace(\"input_file_name\", '/', ' '), \"yyyy-MM-dd HH mm\")).drop(\"input_file_name\")\n",
+					"\n",
+					"\n",
+					"\n",
+					"                print(\"**** PRIMARY KEY FOUND. FILTERING ON MOST RECENT AND OVERWRITING *****\")\n",
+					"                primary_key=[x.strip() for x in primary_key.split(',')]\n",
+					"                w=Window().partitionBy(primary_key).orderBy(F.col(\"input_file_timestamp\").desc())\n",
+					"                new_df= new_df1.withColumn('row_num', row_number().over(w))\\\n",
+					"                            .filter(\"row_num==1\").drop('row_num')\n",
+					"\n",
+					"                print(\"**** OVERWRITING SCHEMA *****\")\n",
+					"                new_df.write.format('delta') \\\n",
+					"                .mode('overwrite') \\\n",
+					"                .option('overwriteSchema', 'true') \\\n",
+					"                .save(bronze_path)\n",
+					" \n",
+					"                print(\"*** CREATING TABLE IF NOT EXISTS ***\")\n",
+					"                spark.sql(f\"\"\"\n",
+					"                    CREATE TABLE IF NOT EXISTS {bronze_name}\n",
+					"                    USING DELTA\n",
+					"                    LOCATION '{bronze_path}'\n",
+					"                \"\"\")\n",
+					"                print(f\"**** TABLE CREATED : {bronze_name} ****\")\n",
+					"                #spark.sql(f\"DELETE FROM {bronze_name}\")\n",
+					"                df_landing = spark.readStream.format(\"parquet\").schema(spark.read.parquet(source_path).schema).load(source_path)\n",
+					"                #mssparkutils.notebook.exit(f\"Overwrite completed for {bronze_name}\")\n",
+					"                #spark.sql(f\"TRUNCATE TABLE {bronze_name}\")\n",
+					"            elif primary_key is None:\n",
+					"                \n",
+					"                new_df1=spark.read.parquet(source_path)\\\n",
+					"                     .withColumn('IsActive', lit('1')) \\\n",
+					"                        .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"                        .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                        .withColumn(\"input_file_name\",  F.regexp_extract(F.input_file_name(), r'(\\d{4}-\\d{2}-\\d{2}/\\d{2}/\\d{2})', 1))\\\n",
+					"                        .withColumn(\"input_file_timestamp\", F.to_timestamp(F.regexp_replace(\"input_file_name\", '/', ' '), \"yyyy-MM-dd HH mm\")).drop(\"input_file_name\")\n",
+					"\n",
+					"\n",
+					"\n",
+					"                print(\"****PRIMARY KEY IS NONE. FILTERING AND OVERWRITING*****\")\n",
+					"\n",
+					"                w=Window().partitionBy(spark.read.parquet(source_path).columns).orderBy(F.col(\"input_file_timestamp\").desc())\n",
+					"                new_df= new_df1.withColumn('row_num', row_number().over(w))\\\n",
+					"                            .filter(\"row_num==1\").drop('row_num')\n",
+					"\n",
+					"                new_df.write.format('delta') \\\n",
+					"                .mode('overwrite') \\\n",
+					"                .option('overwriteSchema', 'true') \\\n",
+					"                .save(bronze_path)\n",
+					"\n",
+					"                spark.sql(f\"\"\"\n",
+					"                    CREATE TABLE IF NOT EXISTS {bronze_name}\n",
+					"                    USING DELTA\n",
+					"                    LOCATION '{bronze_path}'\n",
+					"                \"\"\")\n",
+					"                print(f\"**** TABLE CREATED : {bronze_name} ****\")\n",
+					"                #spark.sql(f\"TRUNCATE TABLE {bronze_name}\")\n",
+					"                df_landing = spark.readStream.format(\"parquet\").schema(spark.read.parquet(source_path).schema).load(source_path)\n",
+					"                #mssparkutils.notebook.exit(f\"Overwrite completed for {bronze_name}\")\n",
+					"                #spark.sql(f\"TRUNCATE TABLE {bronze_name}\")\n",
+					"            else:\n",
+					"                df_landing = spark.readStream.format(\"parquet\").schema(spark.read.parquet(source_path).schema).load(source_path)\n",
+					"            \n",
+					"        elif file_type == 'delta':\n",
+					"            if overwrite=='yes' or spark.catalog.tableExists(bronze_name)==False:\n",
+					"                print(\"**** Overwrite parameter override: \"+ overwrite + \"****\")\n",
+					"\n",
+					"                try:\n",
+					"                    mssparkutils.fs.rm(raw_checkpoint_location, recurse=True)\n",
+					"                except Exception as e:\n",
+					"                    print(f\"Failed to remove the directory: {e}\")\n",
+					"\n",
+					"\n",
+					"                    \n",
+					"                print(f\"**** RECREATING TABLE {bronze_name} ****\")\n",
+					"                \n",
+					"                # Check if the source table exists\n",
+					"                if spark.catalog.tableExists(f\"delta.`{source_path}`\"):\n",
+					"                    spark.sql(f\"ALTER TABLE delta.`{source_path}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)\")\n",
+					"                else:\n",
+					"                    print(f\"Source table at {source_path} does not exist.\")\n",
+					"\n",
+					"                # Check if the change data feed (CDF) table exists\n",
+					"                if spark.catalog.tableExists(f\"delta.`{cdf_path}`\"):\n",
+					"                    spark.sql(f\"ALTER TABLE delta.`{cdf_path}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)\")\n",
+					"                else:\n",
+					"                    print(f\"CDF table at {cdf_path} does not exist.\")\n",
+					"                \n",
+					"                history_df = spark.sql(f\"DESCRIBE HISTORY delta.`{source_path}`\")\n",
+					"                current_version_info = history_df.orderBy(\"version\", ascending=False).first()\n",
+					"                overwrite_version=current_version_info['version']\n",
+					" \n",
+					"                if target_table_category=='fo':\n",
+					"                    df_1=spark.read.format(\"delta\").load(source_path)\\\n",
+					"                                                .withColumn('IsActive', lit('1')) \\\n",
+					"                                                .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"                                                .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                                                .withColumn('cdf_overwrite_version', lit(str(overwrite_version)))\\\n",
+					"                                                .write.format(\"delta\").mode(\"overwrite\").option('overwriteSchema', 'true').save(bronze_path)\n",
+					"                                                #.load(f'{source_path}'+'/'+source_table_name)\n",
+					"                elif target_table_category==\"crm\":\n",
+					"                    source_table= source_storage_container_name.replace(\"-\",\"_\")+'.'+source_table_name.replace(\"_partitioned\",\"\")\n",
+					"                    metadata_table1=\"GlobalOptionsetMetadata\"\n",
+					"                    metadata_table2=\"OptionsetMetadata\"\n",
+					"                    table_df = spark.sql(f\"SELECT * FROM {source_table}\")\n",
+					"                    table_columns = [x.lower() for x in table_df.columns]\n",
+					"                    spark_sql1=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM {source_storage_container_name.replace(\"-\",\"_\")}.{metadata_table1} \n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"\n",
+					"\n",
+					"                    spark_sql2=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM {source_storage_container_name.replace(\"-\",\"_\")}.{metadata_table2}\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"                    \n",
+					"                    spark.sql(f\"\"\"SELECT 'statecode' AS OptionSetName, CAST(State AS STRING) as Option,LocalizedLabel, EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.StatusMetadata UNION ALL SELECT 'statuscode' AS OptionSetName, CAST(Status AS STRING) as Option,LocalizedLabel,EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.StatusMetadata\"\"\")\\\n",
+					"                    .createOrReplaceTempView(\"status_view\")\n",
+					"\n",
+					"                    spark_sql3=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM status_view\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"\n",
+					"                    spark.sql(f\"\"\"SELECT DISTINCT 'new_nationality' AS OptionSetName, a.new_nationality AS Option, c.new_name AS LocalizedLabel, 'account' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.account a JOIN {source_storage_container_name.replace(\"-\",\"_\")}.new_counrty c ON a.new_nationality = c.new_counrtyid UNION ALL SELECT DISTINCT 'new_additionaladdresscountry' AS OptionSetName, a.new_additionaladdresscountry AS Option, c.new_name AS LocalizedLabel, 'account' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.account a JOIN {source_storage_container_name.replace(\"-\",\"_\")}.new_counrty c ON a.new_additionaladdresscountry = c.new_counrtyid UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'appointment' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.appointment UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'email' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.email UNION ALL SELECT DISTINCT 'objecttypecode' AS OptionSetName, objecttypecode AS Option, objecttypecode AS LocalizedLabel, 'annotation' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.annotation UNION ALL SELECT DISTINCT 'templatetypecode' AS OptionSetName, templatetypecode AS Option, templatetypecode AS LocalizedLabel, 'template' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.template UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'task' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.task UNION ALL SELECT DISTINCT 'objecttypecode' AS OptionSetName, objecttypecode AS Option, objecttypecode AS LocalizedLabel, 'resource' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.resource UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'recurringappointmentmaster' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.recurringappointmentmaster UNION ALL SELECT DISTINCT 'activitytypecode' AS OptionSetName, activitytypecode AS Option, activitytypecode AS LocalizedLabel, 'activitypointer' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.activitypointer UNION ALL SELECT DISTINCT 'new_chemonicsrbu' AS OptionSetName, new_chemonicsrbu AS Option, new_chemonicsrbu AS LocalizedLabel, 'lead' AS EntityName FROM {source_storage_container_name.replace(\"-\",\"_\")}.lead;\"\"\").createOrReplaceTempView(\"missing_mapping_view\")\n",
+					"                    \n",
+					"                    spark_sql4=f\"\"\"SELECT OptionSetName, Option, LocalizedLabel FROM missing_mapping_view\n",
+					"                            WHERE lower(OptionSetName) IN \"\"\" + str(table_columns).replace('[','(').replace(']',')') + f\"\"\"AND EntityName = '{source_table.split('.')[1]}' \"\"\"\n",
+					"\n",
+					"                    dictionary_df=spark.sql(spark_sql1).union(spark.sql(spark_sql2)).union(spark.sql(spark_sql3)).union(spark.sql(spark_sql4))\n",
+					"                    table_df = spark.read.format(\"delta\").load(source_path)\n",
+					"\n",
+					"                    final_df = map_option_sets(table_df, dictionary_df)\n",
+					"                    df_1= final_df.withColumn('IsActive', lit('1')) \\\n",
+					"                                                .withColumn('EffectiveFrom', current_timestamp()) \\\n",
+					"                                                .withColumn('EffectiveTo', to_timestamp(lit('9999-12-31 23:59:59.997'), 'yyyy-MM-dd HH:mm:ss.SSS'))\\\n",
+					"                                                .withColumn('cdf_overwrite_version', lit(str(overwrite_version)))\\\n",
+					"                                                .write.format(\"delta\").mode(\"overwrite\").option('overwriteSchema', 'true').save(bronze_path)\n",
+					"                    \n",
+					"\n",
+					"\n",
+					"\n",
+					"                #df_1.createOrReplaceTempView(\"temp_view\"+bronze_name.replace(\".\",\"_\"))\n",
+					"                spark.sql(f\"\"\"DROP TABLE IF EXISTS {bronze_name}\"\"\")\n",
+					"                # Use SQL API to create or replace the table with a specified location\n",
+					"                spark.sql(f\"\"\"\n",
+					"                    CREATE TABLE {bronze_name}\n",
+					"                    USING DELTA\n",
+					"                    LOCATION '{bronze_path}'\n",
+					"                \"\"\")\n",
+					"                print(f\"**** TABLE CREATED : {bronze_name} ****\")\n",
+					"                \n",
+					"                #print(\"RUNNING UPDATE COMMAND FOR SOFT DELETE ON IsDelete=True\")\n",
+					"                #spark.sql(f\"\"\"UPDATE {bronze_name} SET IsActive = '0', EffectiveTo = current_timestamp() WHERE IsDelete=True\"\"\")\n",
+					"                #history_df = spark.sql(f\"DESCRIBE HISTORY delta.`{f'{source_path}'+'/'+source_table_name}`\")\n",
+					"                #current_version_info = history_df.orderBy(\"version\", ascending=False).first()\n",
+					"                #overwrite_version=current_version_info['version']\n",
+					"\n",
+					"\n",
+					"                print(\"*******\"+str(overwrite_version)+\"******\")\n",
+					"                \n",
+					"            overwrite_version=spark.table(bronze_name).select(\"cdf_overwrite_version\").filter(\"cdf_overwrite_version is not null\").first()[0]\n",
+					"            print(f\"**** RUNNING CDF INCREMENTAL WITH STARTING_VERSION: {overwrite_version} ****\")\n",
+					"            #overwrite_version.option(\"startingVersion\", int(overwrite_version))\\.option(\"readChangeFeed\", \"true\")\\\n",
+					"            df_landing = spark.readStream.format('delta').option(\"readChangeFeed\", \"true\")\\\n",
+					"                            .load(cdf_path).withColumn('SourceTableName', input_file_name())\n",
+					"                      \n",
+					"        return df_landing\n",
+					"\n",
+					"    except Exception as e:\n",
+					"        print(f\"Bronze read stream failed for {source_table_name}.\"+ f\"\"\"{str(e)}\"\"\")"
+				],
+				"execution_count": 9
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Write to Raw"
+				]
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Function: write_data\n",
+					"This function writes the streaming DataFrame to the bronze layer by processing each batch using the bronze_batch_process function. It sets up the streaming write operation with appropriate configurations, including checkpointing for fault tolerance, specifying the output mode, and triggering the process to run until all available data is processed. The function ensures data is continuously ingested and merged into the bronze table.\n",
+					"\n",
+					"#### Function: file_ingest\n",
+					"file_ingest retrieves ingestion configuration parameters for a given table and category from the metadata database. It constructs a dictionary containing all necessary settings, such as file type, delimiter, source storage details, primary keys, and other ingestion flags. These configurations are essential for the data reading and writing processes to function correctly.\n",
+					"\n",
+					"#### Function: get_bronze_tables\n",
+					"This function obtains a list of tables that need to be processed for ingestion into the bronze layer based on the source type (database or file) and the target table category. It queries the metadata to find all tables marked for ingestion (Ingest_Flag set to 'y') under the specified category, enabling dynamic and scalable data processing workflows.\n",
+					"\n",
+					"\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"\n",
+					"\n",
+					"\n",
+					"def write_data(df_landing, target_table_name, raw_checkpoint_location, row_count, bronze_path,source_table_name, primary_key, bronze_name, cdf, source_storage_container_name, cdf_path):\n",
+					"  try:\n",
+					"      df_landing.writeStream.queryName(f\"{target_table_name}\").foreachBatch(lambda batch_df,batch_id : bronze_batch_process(batch_df, batch_id, bronze_path, row_count, source_table_name, primary_key, bronze_name,cdf,source_storage_container_name, cdf_path)) \\\n",
+					"        .option('checkpointLocation', raw_checkpoint_location) \\\n",
+					"        .outputMode(\"append\") \\\n",
+					"        .trigger(availableNow=True) \\\n",
+					"        .start() \\\n",
+					"        .awaitTermination()\n",
+					"                                        \n",
+					"  except Exception as e: \n",
+					"      raise Exception(f\"Bronze write stream failed for {target_table_name}.\"+ f\"\"\"{str(e)}\"\"\")\n",
+					"\n",
+					"def file_ingest(table_name, table_category):\n",
+					"        file_ingest_dict = dict()\n",
+					"        metadata_df = spark.sql(f\"\"\"Select * from {metadata_schema}.metadata_file_ingestion where lower(Target_Table_Category) like '%{table_category.lower()}%' \n",
+					"                                and lower(Source_Table_Name) = '{table_name}' and lower(Ingest_Flag) = 'y' \"\"\")\n",
+					"        \n",
+					"        for i in metadata_df.columns:\n",
+					"            file_ingest_dict[f'{i}'] = metadata_df.select(f'{i}').first()[0]\n",
+					"        return file_ingest_dict\n",
+					"\n",
+					"def get_bronze_tables(source_type, table_category):\n",
+					"        if source_type.lower() == 'database':\n",
+					"            metadata_df = spark.sql(f\"\"\"SELECT Source_Table_Name from {metadata_schema}.metadata_database_ingestion where lower(Target_Table_Category) like '%{table_category.lower()}%' and lower(Ingest_Flag) = 'y' \"\"\")\n",
+					"        else:\n",
+					"            metadata_df = spark.sql(f\"\"\"SELECT Source_Table_Name from {metadata_schema}.metadata_file_ingestion where lower(Target_Table_Category) like '%{table_category.lower()}%' and lower(Ingest_Flag) = 'y' \"\"\")\n",
+					"            \n",
+					"        collected_rows = metadata_df.select('Source_Table_Name').collect()\n",
+					"\n",
+					"        bronze_table_list = [row['Source_Table_Name'] for row in collected_rows]\n",
+					"\n",
+					"\n",
+					"        return bronze_table_list\n",
+					"\n",
+					""
+				],
+				"execution_count": 10
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Function: process_tables\n",
+					"- process_tables orchestrates the ingestion process for a single table. \n",
+					"- It first retrieves the necessary configurations using file_ingest, then reads the data using read_data, and finally writes the data into the bronze layer using write_data. \n",
+					"- The function includes error handling to log any issues and exits the process with appropriate status messages, ensuring reliability and transparency in the data ingestion pipeline.\n",
+					"\n",
+					"##### DETAILS\n",
+					"\n",
+					"## Explanation:\n",
+					"\n",
+					"###### Import Statements:\n",
+					"\n",
+					"- Imports the `json` module for handling JSON data.\n",
+					"\n",
+					"###### Configuration Retrieval:\n",
+					"\n",
+					"1. Sets the `step` variable to `\"Fetch Source Details\"` for error tracking.\n",
+					"2. Calls the `file_ingest` function to retrieve ingestion configurations for the specified table.\n",
+					"3. Extracts various configuration parameters from the returned dictionary `file_ingest_dict`.\n",
+					"\n",
+					"###### Path Construction and Variable Initialization:\n",
+					"\n",
+					"1. Constructs necessary paths for:\n",
+					"   - Source data\n",
+					"   - Bronze data storage\n",
+					"   - Checkpointing\n",
+					"2. Initializes a Spark accumulator `row_count` to keep track of the number of rows processed.\n",
+					"\n",
+					"###### Data Reading:\n",
+					"\n",
+					"1. Updates the `step` variable to `\"Reading data\"`.\n",
+					"2. Calls the `read_data` function with the necessary parameters to read data from the source.\n",
+					"\n",
+					"###### Data Writing with SCD Type 2 Merge:\n",
+					"\n",
+					"1. Updates the `step` variable to `\"Writing data with SCD TYPE 2 MERGE\"`.\n",
+					"2. Calls the `write_data` function to write the data into the bronze layer with SCD Type 2 handling.\n",
+					"\n",
+					"###### Successful Completion:\n",
+					"\n",
+					"- If no exceptions occur:\n",
+					"  - Sets the status to `'SUCCESSFUL'` and updates the `step` to `'NO ERROR'`.\n",
+					"  - Records the `end_time`.\n",
+					"  - Exits the notebook using `mssparkutils.notebook.exit`, passing success details.\n",
+					"\n",
+					"###### Exception Handling:\n",
+					"\n",
+					"- If an exception occurs:\n",
+					"  1. Captures the error details.\n",
+					"  2. Sets the status to `'FAILED'` and `row_count` to 0.\n",
+					"  3. Records the `end_time`.\n",
+					"  4. Constructs an `output_data` dictionary with error details.\n",
+					"  5. Exits the notebook using `mssparkutils.notebook.exit`, passing error details in JSON format.\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"def process_tables(source_table_name, target_table_category):\n",
+					"    import json\n",
+					"    try:\n",
+					"        step = \"Fetch Source Details\"\n",
+					"        # File_Ingestion Variables\n",
+					"        file_ingest_dict = file_ingest(source_table_name, target_table_category)\n",
+					"        print(file_ingest_dict)\n",
+					"        ingestion_id = file_ingest_dict['Ingestion_ID']\n",
+					"        #connection_id = file_ingest_dict['Connection_ID']\n",
+					"        file_type = str(file_ingest_dict['File_Type'])\n",
+					"        delimiter = file_ingest_dict['Delimiter']\n",
+					"        multiline = str(file_ingest_dict['Multiline'])\n",
+					"        first_row_is_header = str(file_ingest_dict['First_Row_Is_Header'])\n",
+					"        source_storage_account_name = file_ingest_dict['Source_Storage_Account_Name']\n",
+					"        source_storage_container_name = file_ingest_dict['Source_Storage_Container_Name']\n",
+					"        file_path = file_ingest_dict['File_Path']\n",
+					"        primary_key = file_ingest_dict['Primary_Key']\n",
+					"        ingest_flag = str(file_ingest_dict['Ingest_Flag']).lower()\n",
+					"        #load_type = str(file_ingest_dict['Load_Type']).lower()\n",
+					"        target_table_name = file_ingest_dict['Target_Table_Name'].lower()\n",
+					"        cdf=file_ingest_dict['cdf']\n",
+					"        target_table_category=file_ingest_dict['Target_Table_Category']\n",
+					"\n",
+					"        spark.sql(f\"\"\"create schema if not exists {target_table_category.replace('-','_')}\"\"\")\n",
+					"        bronze_name = f\"{target_table_category.replace('-','_')}.{target_table_name}\"\n",
+					"        spark.catalog.tableExists(bronze_name)\n",
+					"        source_path = \"abfss://{}@{}.dfs.core.windows.net/{}\".format(source_storage_container_name, source_storage_account_name, file_path)\n",
+					"        bronze_path = \"abfss://{}@{}.dfs.core.windows.net/{}\".format(\"framework\", adls_account_name, target_table_category+\"/\"+target_table_name)\n",
+					"        cdf_path = \"abfss://{}@{}.dfs.core.windows.net/{}\".format(\"framework\", adls_account_name, \"cdc\"+\"/\"+ target_table_category +\"/\"+target_table_name)\n",
+					"        raw_checkpoint_location = \"abfss://{}@{}.dfs.core.windows.net/{}\".format(\"framework\", adls_account_name, \"checkpointing/\"+target_table_category+\"/\"+source_table_name)\n",
+					"        #row_count='na'\n",
+					"        row_count = spark.sparkContext.accumulator(0)\n",
+					"        step=\"persisting CDF logs\"\n",
+					"\n",
+					"        if cdf==\"yes\":\n",
+					"            persist_cdf_logs(source_path, primary_key, bronze_name, cdf_path)\n",
+					"\n",
+					"        step = \"Reading data\"\n",
+					"        df_landing = read_data(file_type, delimiter, first_row_is_header, multiline, source_path, source_table_name,bronze_path,bronze_name, raw_checkpoint_location, primary_key , source_storage_container_name, cdf_path)\n",
+					"        \n",
+					"        step = \"Writing data with SCD TYPE 2 MERGE\"\n",
+					"        write_data(df_landing, target_table_name, raw_checkpoint_location, row_count, bronze_path, source_table_name, primary_key, bronze_name, cdf, source_storage_container_name, cdf_path)\n",
+					"        #raise ValueError(\"Cannot divide by zero\")\n",
+					"        status = 'SUCCESSFUL'\n",
+					"        step = 'NO ERROR'\n",
+					"        end_time = datetime.datetime.now(eastern)\n",
+					"\n",
+					"        mssparkutils.notebook.exit(f\"{str(pipeline_id)},{ingestion_type},{target_table_category},{source_table_name},{str(row_count)},{str(start_time)},{str(end_time)}, Overwrite = {overwrite},{status}\")\n",
+					"        \n",
+					"        #raise ValueError(\"Cannot divide by zero\")\n",
+					"        e=\"no error\"\n",
+					"    except Exception as e:\n",
+					"\n",
+					"        error_description = f\"Ingestion failed at step {step}\"\n",
+					"        status = 'FAILED'\n",
+					"        row_count = 0\n",
+					"        end_time = datetime.datetime.now(eastern)\n",
+					"        if \"'NoneType' object has no attribute 'writeStream'\" in str(e):\n",
+					"            error_message= \"NO CDC DATA FOUND FOR THIS TABLE. CHECK IF TABLE IS GETING INCREMENTAL RECORDS. IF NOT IT IS STATIC TABLE. CARRY ON\"\n",
+					"            output_data = {\n",
+					"                \"pipeline_id\": pipeline_id,\n",
+					"                \"level\": \"bronze\",\n",
+					"                \"target_table_category\": target_table_category,\n",
+					"                \"source_table_name\": source_table_name,\n",
+					"                \"error_description\": error_description,\n",
+					"                \"error_message\": error_message,\n",
+					"                \"end_time\": str(end_time)\n",
+					"            }\n",
+					"        else:\n",
+					"            output_data = {\n",
+					"                \"pipeline_id\": pipeline_id,\n",
+					"                \"level\": \"bronze\",\n",
+					"                \"target_table_category\": target_table_category,\n",
+					"                \"source_table_name\": source_table_name,\n",
+					"                \"error_description\": error_description,\n",
+					"                \"error_message\": str(e),\n",
+					"                \"end_time\": str(end_time)\n",
+					"            }\n",
+					"            \n",
+					"        \n",
+					"        mssparkutils.notebook.exit(json.dumps(output_data))\n",
+					"\n",
+					"\n",
+					"\n",
+					""
+				],
+				"execution_count": 11
+			},
+			{
+				"cell_type": "markdown",
+				"metadata": {
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"#### Main Execution Flow\n",
+					"- The main execution logic determines whether to process multiple tables in parallel or a single table sequentially.\n",
+					"- If multiple tables are to be processed, it uses a thread pool (ThreadPool) to parallelize the execution by calling process_tables for each table concurrently.\n",
+					"- This approach enhances performance and efficiency when dealing with large numbers of tables. If only one table is specified, it processes it directly without parallelization.\n",
+					"\n",
+					"##### DETAILS:\n",
+					"- Import Statements:\n",
+					"\n",
+					"from multiprocessing.pool import ThreadPool: Imports the ThreadPool class to enable parallel processing of multiple tables.\n",
+					"Parameter Normalization:\n",
+					"\n",
+					"-Converts source_table_name and target_table_category to lowercase to ensure consistency in comparisons and processing.\n",
+					"Building the List of Tables to Process:\n",
+					"\n",
+					"- Initializes an empty list bronze_table_list.\n",
+					"- If source_table_name is empty (i.e., not provided), it retrieves all relevant tables by calling the get_bronze_tables function.\n",
+					"- If source_table_name is provided, it adds it to the bronze_table_list.\n",
+					"##### Determining Processing Strategy:\n",
+					"\n",
+					"- Calculates the number of tables to process (list_length).\n",
+					"- If there are multiple tables (list_length > 1), it sets up parallel processing using a thread pool.\n",
+					"-Creates a ThreadPool with a number of workers equal to the number of tables.\n",
+					"- Uses pool.starmap to apply the process_tables function to each table in parallel.\n",
+					"- Each worker processes one table by calling process_tables with source_table_name and target_table_category.\n",
+					"- If there is only one table, it processes it sequentially by directly calling process_tables.\n",
+					"- Printing Results:\n",
+					"\n",
+					"If parallel processing is used, it prints the results returned by the worker threads.\n",
+					""
+				]
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"outputs_hidden": false,
+						"source_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language_group": "synapse_pyspark"
+					}
+				},
+				"source": [
+					"from multiprocessing.pool import ThreadPool\n",
+					"source_table_name = source_table_name.lower()\n",
+					"target_table_category = target_table_category.lower()\n",
+					"\n",
+					"bronze_table_list = list()\n",
+					"\n",
+					"if source_table_name == \"\":\n",
+					"    bronze_table_list = get_bronze_tables(ingestion_type, target_table_category)\n",
+					"else:\n",
+					"    bronze_table_list.append(source_table_name)\n",
+					"\n",
+					"list_length = len(bronze_table_list)\n",
+					"\n",
+					"if list_length > 1:\n",
+					"\n",
+					"    max_workers = list_length\n",
+					"    with ThreadPool(processes=max_workers) as pool:\n",
+					"        results = pool.starmap(\n",
+					"            process_tables,\n",
+					"            [(source_table_name, target_table_category) for source_table_name in bronze_table_list]\n",
+					"        )\n",
+					"    print(results)\n",
+					"\n",
+					"\n",
+					"else:\n",
+					"    # no parallelism\n",
+					"    process_tables(bronze_table_list[0], target_table_category)\n",
+					"\n",
+					"    "
+				],
+				"execution_count": 12
+			}
+		]
+	}
+}

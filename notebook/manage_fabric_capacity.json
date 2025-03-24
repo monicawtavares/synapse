@@ -1,0 +1,204 @@
+{
+	"name": "manage_fabric_capacity",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/sources"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "a35400e6-bcb4-421f-9422-e83bc25c3536"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"# Import required libraries\r\n",
+					"from azure.identity import ClientSecretCredential\r\n",
+					"from azure.mgmt.resource import ResourceManagementClient\r\n",
+					"from notebookutils import mssparkutils\r\n",
+					""
+				],
+				"execution_count": 15
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 16
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"target_sku = \"\" #F128\r\n",
+					"capacity_name = \"\" #chemdeveusfabriccp"
+				],
+				"execution_count": 17
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"\r\n",
+					"# Service Principal Credentials (Using Key Vault)\r\n",
+					"# Getting information for Tenant ID, Client ID (Service Principal) and Client Password\r\n",
+					"tenant_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPTenantID',\"AzureKeyVault\")\r\n",
+					"client_id=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", 'FabricSPAppId','AzureKeyVault')\r\n",
+					"client_secret=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"FabricSPClientSecret\", \"AzureKeyVault\")\r\n",
+					"\r\n",
+					""
+				],
+				"execution_count": 18
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"subscription_id = \"f5983069-f0c6-4b06-ac32-1d9235aa0f21\"\r\n",
+					"resource_group_name = \"chem-develop-eus-dpa-mgt\"\r\n",
+					"\r\n",
+					"\r\n",
+					"# Authenticate to Azure\r\n",
+					"print(\"Authenticating to Azure...\")\r\n",
+					"credential = ClientSecretCredential(tenant_id=tenant_id.strip(), client_id=client_id.strip(), client_secret=client_secret.strip())\r\n",
+					"print(credential)\r\n",
+					"resource_client = ResourceManagementClient(credential, subscription_id)\r\n",
+					"\r\n",
+					"# Function to scale Fabric capacity\r\n",
+					"def scale_capacity(resource_group, capacity_name, sku_name):\r\n",
+					"    \"\"\"\r\n",
+					"    Scale the Azure Fabric capacity to a specified SKU.\r\n",
+					"\r\n",
+					"    This function retrieves an existing Fabric capacity resource in a specified Azure \r\n",
+					"    resource group and updates its SKU to the desired value, allowing dynamic scaling \r\n",
+					"    of the resource.\r\n",
+					"\r\n",
+					"    Parameters:\r\n",
+					"        resource_group (str): The name of the Azure resource group containing the Fabric capacity.\r\n",
+					"        capacity_name (str): The name of the Fabric capacity resource to scale.\r\n",
+					"        sku_name (str): The target SKU to scale the capacity to (e.g., 'F128', 'F64').\r\n",
+					"\r\n",
+					"    Returns:\r\n",
+					"        None: This function does not return a value. It performs the scaling operation \r\n",
+					"              and prints status updates to the console.\r\n",
+					"\r\n",
+					"    Raises:\r\n",
+					"        azure.core.exceptions.ResourceNotFoundError: If the specified resource is not found.\r\n",
+					"        azure.core.exceptions.HttpResponseError: If the API call fails for any reason.\r\n",
+					"        Exception: For any other unexpected errors during the scaling process.\r\n",
+					"\r\n",
+					"    Example:\r\n",
+					"        scale_capacity(\r\n",
+					"            resource_group=\"chem-develop-eus-dpa-mgt\",\r\n",
+					"            capacity_name=\"chemdeveusfabriccp\",\r\n",
+					"            sku_name=\"F128\"\r\n",
+					"        )\r\n",
+					"    \"\"\"\r\n",
+					"    print(f\"Retrieving Fabric capacity '{capacity_name}'...\")\r\n",
+					"    capacity = resource_client.resources.get(\r\n",
+					"        resource_group_name=resource_group,\r\n",
+					"        resource_provider_namespace=\"Microsoft.Fabric\",\r\n",
+					"        parent_resource_path=\"\",\r\n",
+					"        resource_type=\"capacities\",\r\n",
+					"        resource_name=capacity_name,\r\n",
+					"        api_version=\"2023-11-01\"\r\n",
+					"    )\r\n",
+					"    \r\n",
+					"    print(f\"Current SKU: {capacity.sku}\")\r\n",
+					"    print(f\"Scaling capacity to {sku_name}...\")\r\n",
+					"    target_sku = {\"name\": sku_name, \"tier\": \"Fabric\"}\r\n",
+					"    resource_client.resources.begin_update_by_id(\r\n",
+					"        resource_id=capacity.id,\r\n",
+					"        api_version=\"2023-11-01\",\r\n",
+					"        parameters={\"sku\": target_sku}\r\n",
+					"    ).result()\r\n",
+					"    print(f\"Capacity scaled to {sku_name} successfully.\")\r\n",
+					"\r\n",
+					"# Scale capacity based on input\r\n",
+					"scale_capacity(resource_group_name, capacity_name, target_sku)\r\n",
+					""
+				],
+				"execution_count": 19
+			}
+		]
+	}
+}

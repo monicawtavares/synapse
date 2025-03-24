@@ -1,0 +1,266 @@
+{
+	"name": "one-time-load-cdp",
+	"properties": {
+		"folder": {
+			"name": "DataPlatform/sources"
+		},
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "22a906f2-8ae8-4144-995f-0fed0e91fdf5"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
+			"language_info": {
+				"name": "python"
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from pyspark.sql.functions import input_file_name,regexp_replace, element_at, split\r\n",
+					"import re"
+				],
+				"execution_count": 26
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"%run neudesic-odp/framework/neuacc-odp-framework"
+				],
+				"execution_count": 27
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					},
+					"microsoft": {
+						"language": "python"
+					},
+					"tags": [
+						"parameters"
+					]
+				},
+				"source": [
+					"%%pyspark\r\n",
+					"# Parameter cell\r\n",
+					"source_storage_container_name = \"\" #fando-one-time-load\r\n",
+					"source_folder_path = \"\" #static_files\r\n",
+					"target_table_category = \"\" #fo-query-onetimeload\r\n",
+					"target_schema = \"\" #fo_query\r\n",
+					""
+				],
+				"execution_count": 28
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"from notebookutils import mssparkutils\r\n",
+					"secret_value = mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountKey\", \"AzureKeyVault\")\r\n",
+					"adls_account_name=mssparkutils.credentials.getSecret(f\"chem{get_current_env()}euskv01\", \"ADLSGen2StorageAccountName\", \"AzureKeyVault\")\r\n",
+					"spark.conf.set(f\"spark.hadoop.fs.azure.account.key.chem{get_current_env()}eussa.dfs.core.windows.net\", secret_value)"
+				],
+				"execution_count": 29
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"def process_one_time_loads_cdp(source_storage_container_name, adls_account_name, source_folder_path, target_table_category, target_schema):\r\n",
+					"\r\n",
+					"    \"\"\"\r\n",
+					"    Processes one-time data loads from CSV files in an Azure Data Lake Storage (ADLS) container and writes them as Delta tables \r\n",
+					"    in a specified schema. This function handles CSV file ingestion, schema management, and the creation of Delta tables.\r\n",
+					"\r\n",
+					"    Args:\r\n",
+					"        source_storage_container_name (str): The name of the ADLS storage container where the source CSV files are located.\r\n",
+					"        adls_account_name (str): The ADLS account name.\r\n",
+					"        source_folder_path (str): Path within the ADLS container to the folder containing the source CSV files.\r\n",
+					"        target_table_category (str): The target directory category in ADLS where processed tables will be saved in Delta format.\r\n",
+					"        target_schema (str): The schema (or database) in which the Delta tables will be created in the Spark metastore.\r\n",
+					"\r\n",
+					"    Returns:\r\n",
+					"        None\r\n",
+					"    \"\"\"\r\n",
+					"\r\n",
+					"    from pyspark.sql.functions import input_file_name, regexp_replace, element_at, split, lit\r\n",
+					"    import re\r\n",
+					"    from notebookutils import mssparkutils\r\n",
+					"\r\n",
+					"    # Construct the source folder path\r\n",
+					"    source_path = f\"abfss://{source_storage_container_name}@{adls_account_name}.dfs.core.windows.net/{source_folder_path}\"\r\n",
+					"    \r\n",
+					"    # List CSV files using mssparkutils\r\n",
+					"    file_list = mssparkutils.fs.ls(source_path)\r\n",
+					"\r\n",
+					"    csv_files = [file.path for file in file_list if file.name.endswith('.csv')]\r\n",
+					"    \r\n",
+					"    if not csv_files:\r\n",
+					"        print(\"No CSV files found in the source path.\")\r\n",
+					"        return\r\n",
+					"\r\n",
+					"    # Process each CSV file individually\r\n",
+					"    for file_path in csv_files:\r\n",
+					"        file_name = file_path.split('/')[-1]\r\n",
+					"        source_file_name = file_name.replace('.csv', '')\r\n",
+					"        \r\n",
+					"\r\n",
+					"        # Read the CSV file without inferring schema to get headers\r\n",
+					"        df_landing = spark.read.format(\"csv\") \\\r\n",
+					"            .option('header', True) \\\r\n",
+					"            .option('inferSchema', False) \\\r\n",
+					"            .load(file_path) \\\r\n",
+					"            .withColumn('SourceTableName', lit(source_file_name))\r\n",
+					"\r\n",
+					"        # Clean column names\r\n",
+					"        def clean_column_names(df):\r\n",
+					"            pattern = r'[ ,;{}()\\n\\t=]'\r\n",
+					"            new_columns = [re.sub(pattern, '_', col.strip()) for col in df.columns]\r\n",
+					"            df_cleaned = df.toDF(*new_columns)\r\n",
+					"            return df_cleaned\r\n",
+					"\r\n",
+					"        df_landing_cleaned = clean_column_names(df_landing)\r\n",
+					"\r\n",
+					"        # Check if DataFrame has data\r\n",
+					"        if df_landing.count() > 0:\r\n",
+					"            print(f\"Data found in {source_file_name}. Processing data.\")\r\n",
+					"\r\n",
+					"            # Read the CSV file with inferSchema=True to get correct data types\r\n",
+					"            df_landing = spark.read.format(\"csv\") \\\r\n",
+					"                .option('header', True) \\\r\n",
+					"                .option('inferSchema', True) \\\r\n",
+					"                .load(file_path) \\\r\n",
+					"                .withColumn('SourceTableName', lit(source_file_name))\r\n",
+					"            df_landing_cleaned = clean_column_names(df_landing)\r\n",
+					"        else:\r\n",
+					"            print(f\"No data found in {source_file_name}. Creating empty DataFrame with schema.\")\r\n",
+					"            \r\n",
+					"            # Use the header-only DataFrame as the schema\r\n",
+					"            df_landing_cleaned = df_landing_cleaned.limit(0)\r\n",
+					"\r\n",
+					"        # Construct the bronze path for this table\r\n",
+					"        bronze_path = f\"abfss://framework@{adls_account_name}.dfs.core.windows.net/{target_table_category}/{source_file_name}\"\r\n",
+					"\r\n",
+					"        # Write DataFrame to Delta format\r\n",
+					"        df_landing_cleaned.write \\\r\n",
+					"            .mode(\"overwrite\") \\\r\n",
+					"            .format(\"delta\") \\\r\n",
+					"            .option(\"mergeSchema\", \"true\") \\\r\n",
+					"            .save(bronze_path)\r\n",
+					"        \r\n",
+					"\r\n",
+					"        # Define the bronze table name\r\n",
+					"        bronze_table_name = f\"{target_schema}.`{source_file_name}`\"\r\n",
+					"\r\n",
+					"        # Ensure the target schema (database) exists\r\n",
+					"        spark.sql(f\"CREATE DATABASE IF NOT EXISTS {target_schema}\")\r\n",
+					"\r\n",
+					"        # Drop the table if it already exists\r\n",
+					"        spark.sql(f\"DROP TABLE IF EXISTS {bronze_table_name}\")\r\n",
+					"\r\n",
+					"        # Create the Delta table in the metastore\r\n",
+					"        spark.sql(f\"\"\"\r\n",
+					"            CREATE TABLE {bronze_table_name}\r\n",
+					"            USING DELTA\r\n",
+					"            LOCATION '{bronze_path}'\r\n",
+					"            \r\n",
+					"        \"\"\")\r\n",
+					"\r\n",
+					"        # Refresh the table metadata\r\n",
+					"        spark.catalog.refreshTable(bronze_table_name)\r\n",
+					"\r\n",
+					"        print(f\"Table {bronze_table_name} has been created successfully.\")\r\n",
+					"\r\n",
+					"    print(\"All CSV files have been processed and converted to Delta tables.\")"
+				],
+				"execution_count": 30
+			},
+			{
+				"cell_type": "code",
+				"metadata": {
+					"jupyter": {
+						"source_hidden": false,
+						"outputs_hidden": false
+					},
+					"nteract": {
+						"transient": {
+							"deleting": false
+						}
+					}
+				},
+				"source": [
+					"process_one_time_loads_cdp(source_storage_container_name, adls_account_name, source_folder_path, target_table_category, target_schema)"
+				],
+				"execution_count": 31
+			}
+		]
+	}
+}
